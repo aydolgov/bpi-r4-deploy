@@ -90,8 +90,8 @@ chmod +x files/etc/uci-defaults/99-pro-8x-network
 # --- identita uzlu bpi-x8 (bezi jako POSLEDNI uci-default) ---
 # Bez tohoto by sysupgrade -n nasadil default 192.168.1.1 = kolize s controllerem
 # bpi-4g. Takhle uzel po kazdem -n naskoci rovnou spravne, bez rucnich kroku.
-\cp -r ../my_files/99-x8-identity files/etc/uci-defaults/
-chmod +x files/etc/uci-defaults/99-x8-identity
+\cp -r ../my_files/999-x8-identity files/etc/uci-defaults/
+chmod +x files/etc/uci-defaults/999-x8-identity
 
 # SD auto-expand: grow production + fitrw f2fs to fill the SD card on first boot
 # (SD-only, fail-closed gate inside the hook; no-op on eMMC/NVMe/NAND)
@@ -124,6 +124,14 @@ chmod +x files/usr/sbin/boot-nand
 ### Feed = VLASTNI KOPIE v tomto repu (iopsys-feed/), nese i nase patche
 ### (DB persistence, MLD/TTLM, onboarding determinismus).
 ### Cileny install: feed ma ~200 balicku, `install -a` by prebil stock OpenWrt.
+# --- feed PIN na 8g stav (4e4bbbf5a) — proti driftu ---
+# iopsys-feed kopie muze nest necommitnute patche pridane PO 15.7 buildu 8g
+# (971/922/953 = MLD world-first). Ty ROZBIJEJI 1905 onboarding (prehazuji poradi
+# CMDU v topology odpovedi; zkouseno i na standardu, rozbily i tam -> revert na 15.7).
+# Viz easymesh-r6 docs/known-issues/patches-971-922-break-onboarding.md.
+# Vycistime feed na committed HEAD (4e4bbbf5a) = presne to, z ceho bezi funkcni 8g.
+( cd "${REPO_DIR}/iopsys-feed" && git reset --hard HEAD && git clean -fd ) 2>/dev/null || true
+
 grep -q "src-link iopsys" feeds.conf.default || echo "src-link iopsys ${REPO_DIR}/iopsys-feed" >> feeds.conf.default
 ./scripts/feeds update iopsys
 ./scripts/feeds install libeasy libwifiutils libwifi libieee1905 ieee1905 ieee1905-map-plugin wifimngr map-controller map-agent
@@ -170,6 +178,9 @@ CONFIG_PACKAGE_sqlite3-cli=y
 CONFIG_PACKAGE_strace=y
 CONFIG_PACKAGE_gdb=y
 CONFIG_PACKAGE_gdbserver=y
+# python3-light: on-box CMDU/1905 dekodovani a debug (struct/re na packet parsing)
+# bez stahovani capture na Mac. Pridano 2026-07-17 pri 1905 onboarding diagnostice.
+CONFIG_PACKAGE_python3-light=y
 # bbfdm (iopsys TR-181 datamodel) VYPNOUT - `feeds install` ho vytahne jako zavislost
 # ieee1905/wifimngr (include bbfdm.mk), protoze NEvyhodnocuje podminku
 # `+IEEE1905_BUILD_TR181_PLUGIN:libbbfdm-api`. defconfig ho pak zapne jako =y a build

@@ -1,6 +1,11 @@
 #!/bin/sh
 # x8-easymesh: identita uzlu bpi-x8 napecena do image (bezi pri prvnim bootu po -n)
 #
+# POZOR NA JMENO: musi byt 999-, ne 99-. uci-defaults se radi lexikalne a
+# `991-multiap-genconfig` + `994-map-set-cntlr-sel-mode` se radi AZ ZA `99-x8-...`
+# ('-' 0x2D < '1' 0x31), takze by nam prepsaly controller_select.local a
+# mapcontroller.enabled. Overeno 2026-07-17.
+#
 # Duvod: sysupgrade -n smaze config -> uzel by naskocil na default 192.168.1.1 a
 # kolidoval s controllerem bpi-4g. Takhle naskoci rovnou spravne a bez rucnich kroku.
 #
@@ -15,6 +20,12 @@
 # bSTA se definuje explicitne, coz je to, co realne funguje i na bpi-8g.
 
 HOSTNAME="bpi-x8"
+# ieee1905 AL-MAC natvrdo. 30-set-ieee1905-al-macaddr ho NEnastavi (get_mac_label je
+# na tomhle boardu prazdny -> skript spadne na `exit 1`), takze si ho ieee1905 demon
+# vygeneruje NAHODNE pri prvnim startu. Kazdy `sysupgrade -n` by tim uzlu zmenil 1905
+# identitu a nechal v controlleru i v mapc.db DUCHA po te predchozi (num_nodes roste).
+# Tahle hodnota = AL-MAC, ktery x8 dostal 2026-07-17 a ktery controller uz zna.
+AL_MAC="e6:a9:d2:c1:98:3f"
 MGMT_PORT="mxl_lan0"
 MGMT_IP="192.168.1.2"
 MESH_IP="10.10.10.2"
@@ -28,7 +39,27 @@ uci -q commit system
 
 # --- mgmt port ven z br-lan (POJISTKA: port musi existovat) ---
 if ! grep -q "$MGMT_PORT" /sys/class/net/*/uevent 2>/dev/null && [ ! -e "/sys/class/net/$MGMT_PORT" ]; then
-    logger -t x8-identity "FATAL: port $MGMT_PORT neexistuje - identita NENASAZENA"
+    # --- srovnat na standard (8g): uklidit stock OpenWrt wireless defaults, ktere
+# onboarding cleanup na Pro 8X nedokonci DETERMINISTICKY (diagnoza 2026-07-17).
+# config_generate vyrobi default_radioX (jmeno phy0.X-ap0) + ap_mld_1 (MT76_AP_MLD);
+# mapagent (ifprefix wlan%-) je nevidi jako svoje -> radios:[] -> uzel se neonboarduje.
+# 8g ma tyto stock sekce vycistene. Delame to explicitne, at uzel startuje rovnou
+# v cilovem stavu a onboarding nemusi nic uklizet. 999-x8-identity bezi jako POSLEDNI
+# uci-default (za 991-multiap-genconfig), takze prepisujeme az jeho vystup.
+for r in 0 1 2; do uci -q delete wireless.default_radio$r; done
+uci -q delete wireless.ap_mld_1
+uci -q commit wireless
+
+# ieee1905: vyloucit raw radio netdevs (wlan0/1/2) z AL registrace, jako ma 8g.
+# Bez toho ieee1905 registruje phy0.X-ap0/raw wlanX misto br-lan -> br-lan se u
+# ieee1905 nikdy nezaregistruje -> zadne AL rozhrani pro topology -> neonboarduje.
+uci -q delete ieee1905.@al-iface[0].exclude_ifname
+uci -q add_list ieee1905.@al-iface[0].exclude_ifname='wlan0'
+uci -q add_list ieee1905.@al-iface[0].exclude_ifname='wlan1'
+uci -q add_list ieee1905.@al-iface[0].exclude_ifname='wlan2'
+uci -q commit ieee1905
+
+logger -t x8-identity "FATAL: port $MGMT_PORT neexistuje - identita NENASAZENA"
     exit 1
 fi
 uci -q del_list network.@device[0].ports="$MGMT_PORT"
@@ -48,6 +79,10 @@ uci -q commit network
 # --- firewall: mgmt do lan zony ATOMICKY (jinak lockout) ---
 uci -q add_list firewall.@zone[0].network='lan_3'
 uci -q commit firewall
+
+# --- ieee1905 AL-MAC (stabilni napric flashi) ---
+uci -q set ieee1905.ieee1905.macaddress="$AL_MAC"
+uci -q commit ieee1905
 
 # --- role: agent ---
 /etc/init.d/mapcontroller disable 2>/dev/null
@@ -80,5 +115,5 @@ uci -q set wireless.default_sta_radio1.encryption="$LAB_BH_ENC"
 uci -q set wireless.default_sta_radio1.key="$LAB_BH_KEY"
 uci -q commit wireless
 
-logger -t x8-identity "identita nasazena: $HOSTNAME mgmt $MGMT_IP ($MGMT_PORT) / mesh $MESH_IP / role agent"
+logger -t x8-identity "identita nasazena: $HOSTNAME mgmt $MGMT_IP ($MGMT_PORT) / mesh $MESH_IP / role agent / AL-MAC $AL_MAC"
 exit 0
