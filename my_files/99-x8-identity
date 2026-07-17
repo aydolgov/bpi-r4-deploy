@@ -1,0 +1,84 @@
+#!/bin/sh
+# x8-easymesh: identita uzlu bpi-x8 napecena do image (bezi pri prvnim bootu po -n)
+#
+# Duvod: sysupgrade -n smaze config -> uzel by naskocil na default 192.168.1.1 a
+# kolidoval s controllerem bpi-4g. Takhle naskoci rovnou spravne a bez rucnich kroku.
+#
+# Split planes (ADR 0008), ale s Pro-8X specifikem:
+#   mgmt = mxl_lan0  (na Pro 8X se porty jmenuji mxl_lan*, ne lan*; mxl_lan0 = port
+#                     s management kabelem). Ostatni porty zustavaji v br-lan jako
+#                     u klasiku - br-lan BEZ portu netifd nezvedne (overeno 2026-07-17).
+#   mesh = br-lan    (WiFi backhaul)
+#
+# NEobsahuje `fw_setenv netmode extender` z node-config.sh: na x8 je fw_env.config
+# pro NAND, boot je z eMMC -> fw_setenv zapisuje jinam a `|| true` chybu spolkne.
+# bSTA se definuje explicitne, coz je to, co realne funguje i na bpi-8g.
+
+HOSTNAME="bpi-x8"
+MGMT_PORT="mxl_lan0"
+MGMT_IP="192.168.1.2"
+MESH_IP="10.10.10.2"
+LAB_BH_SSID="MAP--BH"
+LAB_BH_ENC="sae"
+LAB_BH_KEY="f8ec31d777aca27ab62e37c5907223db2d710fef66a7c062cbd71cfaad91e77"
+
+# --- hostname ---
+uci -q set system.@system[0].hostname="$HOSTNAME"
+uci -q commit system
+
+# --- mgmt port ven z br-lan (POJISTKA: port musi existovat) ---
+if ! grep -q "$MGMT_PORT" /sys/class/net/*/uevent 2>/dev/null && [ ! -e "/sys/class/net/$MGMT_PORT" ]; then
+    logger -t x8-identity "FATAL: port $MGMT_PORT neexistuje - identita NENASAZENA"
+    exit 1
+fi
+uci -q del_list network.@device[0].ports="$MGMT_PORT"
+
+# --- management (netmask VZDY - bez ni /32 = board dosazitelny jen z konzole) ---
+uci -q set network.lan_3=interface
+uci -q set network.lan_3.device="$MGMT_PORT"
+uci -q set network.lan_3.proto='static'
+uci -q set network.lan_3.ipaddr="$MGMT_IP"
+uci -q set network.lan_3.netmask='255.255.255.0'
+
+# --- mesh ---
+uci -q set network.lan.ipaddr="$MESH_IP"
+uci -q set network.lan.netmask='255.255.255.0'
+uci -q commit network
+
+# --- firewall: mgmt do lan zony ATOMICKY (jinak lockout) ---
+uci -q add_list firewall.@zone[0].network='lan_3'
+uci -q commit firewall
+
+# --- role: agent ---
+/etc/init.d/mapcontroller disable 2>/dev/null
+uci -q set mapcontroller.controller.enabled='0'
+uci -q commit mapcontroller
+uci -q set mapagent.@controller_select[0].local='0'
+uci -q set mapagent.@controller_select[0].mode='auto'
+
+# --- bSTA 5 GHz (explicitne, shodne s bpi-8g) ---
+uci -q add mapagent bsta
+uci -q set mapagent.@bsta[-1].device='radio1'
+uci -q set mapagent.@bsta[-1].ifname='wlan1_0'
+uci -q set mapagent.@bsta[-1].band='5'
+uci -q set mapagent.@bsta[-1].priority='1'
+uci -q set mapagent.@bsta[-1].ssid="$LAB_BH_SSID"
+uci -q set mapagent.@bsta[-1].key="$LAB_BH_KEY"
+uci -q set mapagent.@bsta[-1].encryption="$LAB_BH_ENC"
+uci -q set mapagent.@bsta[-1].onboarded='1'
+uci -q commit mapagent
+
+uci -q set wireless.default_sta_radio1='wifi-iface'
+uci -q set wireless.default_sta_radio1.device='radio1'
+uci -q set wireless.default_sta_radio1.mode='sta'
+uci -q set wireless.default_sta_radio1.ifname='wlan1_0'
+uci -q set wireless.default_sta_radio1.disabled='0'
+uci -q set wireless.default_sta_radio1.multi_ap='1'
+uci -q set wireless.default_sta_radio1.multi_ap_profile='3'
+uci -q set wireless.default_sta_radio1.ssid="$LAB_BH_SSID"
+uci -q set wireless.default_sta_radio1.encryption="$LAB_BH_ENC"
+uci -q set wireless.default_sta_radio1.key="$LAB_BH_KEY"
+uci -q commit wireless
+
+logger -t x8-identity "identita nasazena: $HOSTNAME mgmt $MGMT_IP ($MGMT_PORT) / mesh $MESH_IP / role agent"
+exit 0

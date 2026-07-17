@@ -17,3 +17,11 @@ my_files/luci-app-wifimgr/wifimgr-capability-analysis.md
 my_files/luci-app-wifimgr/docs/forum_reply_cookiemonster_post6.md
 my_files/luci-app-wifimgr/docs/mtk_dev_message.md
 my_files/luci-app-wifimgr/docs/test-results-*.md
+
+# --- x8-easymesh: build artefakty a feedy (NEjsou soucast receptu) ---
+# openwrt/ (28G) i mtk-openwrt-feeds/ si builder klonuje sam na pinech ze skriptu.
+# iopsys-feed/ = kopie feedu s nasimi patchi; kanonicky zdroj = woziwrt/easymesh-r6.
+openwrt/
+mtk-openwrt-feeds/
+iopsys-feed/
+*.log
