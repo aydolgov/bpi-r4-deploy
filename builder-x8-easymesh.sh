@@ -91,6 +91,11 @@ chmod +x files/etc/uci-defaults/99-pro-8x-network
 \cp -r ../my_files/999-x8-identity files/etc/uci-defaults/
 chmod +x files/etc/uci-defaults/999-x8-identity
 
+# napecena wireless base (tri wifi-device sekce) -> mac80211.uc negeneruje
+# default_radioX ani ap_mld_1 (radio_exists()==true). Cisty br-lan jako 8g.
+mkdir -p files/etc/config
+\cp ../my_files/wireless-x8 files/etc/config/wireless
+
 # SD auto-expand: grow production + fitrw f2fs to fill the SD card on first boot
 # (SD-only, fail-closed gate inside the hook; no-op on eMMC/NVMe/NAND)
 mkdir -p files/lib/preinit

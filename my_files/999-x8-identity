@@ -39,27 +39,11 @@ uci -q commit system
 
 # --- mgmt port ven z br-lan (POJISTKA: port musi existovat) ---
 if ! grep -q "$MGMT_PORT" /sys/class/net/*/uevent 2>/dev/null && [ ! -e "/sys/class/net/$MGMT_PORT" ]; then
-    # --- srovnat na standard (8g): uklidit stock OpenWrt wireless defaults, ktere
-# onboarding cleanup na Pro 8X nedokonci DETERMINISTICKY (diagnoza 2026-07-17).
-# config_generate vyrobi default_radioX (jmeno phy0.X-ap0) + ap_mld_1 (MT76_AP_MLD);
-# mapagent (ifprefix wlan%-) je nevidi jako svoje -> radios:[] -> uzel se neonboarduje.
-# 8g ma tyto stock sekce vycistene. Delame to explicitne, at uzel startuje rovnou
-# v cilovem stavu a onboarding nemusi nic uklizet. 999-x8-identity bezi jako POSLEDNI
-# uci-default (za 991-multiap-genconfig), takze prepisujeme az jeho vystup.
-for r in 0 1 2; do uci -q delete wireless.default_radio$r; done
-uci -q delete wireless.ap_mld_1
-uci -q commit wireless
-
-# ieee1905: vyloucit raw radio netdevs (wlan0/1/2) z AL registrace, jako ma 8g.
-# Bez toho ieee1905 registruje phy0.X-ap0/raw wlanX misto br-lan -> br-lan se u
-# ieee1905 nikdy nezaregistruje -> zadne AL rozhrani pro topology -> neonboarduje.
-uci -q delete ieee1905.@al-iface[0].exclude_ifname
-uci -q add_list ieee1905.@al-iface[0].exclude_ifname='wlan0'
-uci -q add_list ieee1905.@al-iface[0].exclude_ifname='wlan1'
-uci -q add_list ieee1905.@al-iface[0].exclude_ifname='wlan2'
-uci -q commit ieee1905
-
-logger -t x8-identity "FATAL: port $MGMT_PORT neexistuje - identita NENASAZENA"
+    # de-bloat se resi NAPECENYM /etc/config/wireless (my_files/wireless-x8 -> tri
+    # wifi-device sekce). Diky radio_exists()==true mac80211.uc negeneruje
+    # default_radioX ani ap_mld_1, takze tu neni co uklizet. Drivejsi cleanup byl
+    # OMYLEM v teto FATAL vetvi (na zdravem boardu se nikdy nespustil) - odstranen.
+    logger -t x8-identity "FATAL: port $MGMT_PORT neexistuje - identita NENASAZENA"
     exit 1
 fi
 uci -q del_list network.@device[0].ports="$MGMT_PORT"

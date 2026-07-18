@@ -1,0 +1,60 @@
+#
+# Napecena wireless base pro bpi-x8 (BPI-R4 Pro 8X) - x8-easymesh.
+#
+# DUVOD: sysupgrade -n smaze /etc/config/wireless. Bez napecenych wifi-device sekci
+# vyrobi config_generate/mac80211.uc na prvnim bootu STOCK default_radio0/1/2
+# (OpenWrt-2g/5g/6g) A ZAROVEN ap_mld_1 (MT76_AP_MLD) - viz mac80211.uc: kdyz
+# radio_exists() vrati false, vygeneruje default_radioN a nastavi init_mld=true, cimz
+# pozdeji vznikne i ap_mld_1. Ty stock BSS zaneradi br-lan (7 BSS na 2 radiich),
+# nadmou 1905 reporty a uzel se u controlleru zjevi s radios:[] -> neonboarduje se.
+# 8g (klasik) je nema, protoze mu je node-config.sh za behu smaze; x8 na Pro 8X
+# node-config.sh nefunguje a in-image cleanup neprobehl deterministicky (byl navic
+# omylem v FATAL vetvi identity - opraveno 2026-07-18).
+#
+# RESENI: napect PRESNE tri wifi-device sekce (shodne s 8g /etc/config/wireless, vc.
+# identickeho PCIe path pro MT7996). Diky radio_exists()==true mac80211.uc negeneruje
+# ANI default_radioX ANI ap_mld_1 -> br-lan zustane cisty, jako u 8g.
+# Timing-independent (nezalezi kdy se detekuje phy). bSTA + fronthaul/backhaul AP
+# nedavame sem: bSTA nastavuje 999-x8-identity, mesh AP generuje 991-multiap-genconfig
+# (stejne jako na 8g).
+#
+
+config wifi-device 'radio0'
+	option type 'mac80211'
+	option path 'soc/11300000.pcie/pci0000:00/0000:00:00.0/0000:01:00.0'
+	option radio '0'
+	option band '2g'
+	option channel '1'
+	option htmode 'EHT40'
+	option country 'US'
+	option disabled '0'
+	option noscan '1'
+	option rnr '1'
+	option tx_burst '0.0'
+
+config wifi-device 'radio1'
+	option type 'mac80211'
+	option path 'soc/11300000.pcie/pci0000:00/0000:00:00.0/0000:01:00.0'
+	option radio '1'
+	option band '5g'
+	option channel '36'
+	option htmode 'EHT160'
+	option country 'US'
+	option disabled '0'
+	option noscan '1'
+	option rnr '1'
+	option background_radar '1'
+	option tx_burst '0.0'
+
+config wifi-device 'radio2'
+	option type 'mac80211'
+	option path 'soc/11300000.pcie/pci0000:00/0000:00:00.0/0000:01:00.0'
+	option radio '2'
+	option band '6g'
+	option channel '37'
+	option htmode 'EHT320'
+	option country 'US'
+	option disabled '0'
+	option noscan '0'
+	option mbssid '1'
+	option tx_burst '0.0'
