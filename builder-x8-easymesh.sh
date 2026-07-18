@@ -199,6 +199,14 @@ sed -i "s/^CONFIG_IEEE1905_BUILD_TR181_PLUGIN=y/# CONFIG_IEEE1905_BUILD_TR181_PL
 sed -i "s/^CONFIG_WIFIMNGR_BUILD_TR181_PLUGIN=y/# CONFIG_WIFIMNGR_BUILD_TR181_PLUGIN is not set/" .config
 sed -i "s/^CONFIG_AGENT_USE_LIBDPP=y/# CONFIG_AGENT_USE_LIBDPP is not set/" .config
 sed -i "s/^CONFIG_CONTROLLER_USE_LIBDPP=y/# CONFIG_CONTROLLER_USE_LIBDPP is not set/" .config
+# dm-service + libbbfdm-* VYPNOUT az TED - AZ PO vypnuti TR181 pluginu vyse.
+# Pred-EOF "is not set" NESTACILO: prvni "make defconfig" bezel jeste s TR181 pluginy=y,
+# ktere si dm-service/libbbfdm-* vytahnou jako zavislost -> defconfig je prepnul na =y.
+# Druhy defconfig uz zapnuty symbol nevypne. Fix = vypnout je tady, kdyz uz je nic neselektuje.
+# (Bez toho build padne: "dm-service not available" pri generovani TR-181 datamodelu.)
+sed -i "s/^CONFIG_PACKAGE_dm-service=y/# CONFIG_PACKAGE_dm-service is not set/" .config
+sed -i "s/^CONFIG_PACKAGE_libbbfdm-api=y/# CONFIG_PACKAGE_libbbfdm-api is not set/" .config
+sed -i "s/^CONFIG_PACKAGE_libbbfdm-ubus=y/# CONFIG_PACKAGE_libbbfdm-ubus is not set/" .config
 make defconfig
 echo "CONFIG_PACKAGE_trusted-firmware-a-mt7988-emmc-comb-4bg=y" >> .config
 echo "CONFIG_PACKAGE_trusted-firmware-a-mt7988-sdmmc-comb-4bg=y" >> .config
