@@ -1,0 +1,17 @@
+#!/bin/sh /etc/rc.common
+
+# Late on purpose. The addresses can only be written down once the interfaces
+# exist and have come up, and S95 leaves room for the MLD checks that follow
+# (S96, S98, S99) to run against a settled radio state.
+
+START=95
+
+SETTLE=40
+
+start() {
+	( sleep "$SETTLE"; /usr/sbin/bssid-pin ) >/dev/null 2>&1 &
+}
+
+stop() {
+	return 0
+}

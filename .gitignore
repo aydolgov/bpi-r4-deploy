@@ -1,0 +1,7 @@
+# build stromy — obri, generovane, nepatri do gitu
+openwrt/
+mtk-openwrt-feeds/
+iopsys-feed/
+# zalohy z editaci
+*.bak-*
+*.bak
