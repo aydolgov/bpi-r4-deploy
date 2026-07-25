@@ -1,0 +1,40 @@
+#!/bin/sh
+# Odstran per-radiove FRONTHAUL BSS na uzlu, ktery ma AP-MLD.
+#
+# Rozhodnuti 2026-07-17 (HW s iPhone 6s): AP-MLD JE fronthaul a jeho linky jsou
+# obycejne BSS, takze legacy klient se pripoji na jeden z nich. Per-radiove AP se
+# stejnym ucelem tedy nepridava nic a inzeruje fronthaul dvakrat na kazdem radiu.
+#
+# PROC TO NENI V GENCONFIGU, i kdyz to tam logicky patri: zkusil jsem to (cleanup
+# ve skip bloku AP smycky) a 2026-07-25 instrumentaci PROKAZAL, ze se to na
+# provisionovanem uzlu nikdy nespusti. Cela ta smycka zije uvnitr
+# `if [ $generate_mapagent_config -eq 1 ]`, a ta promenna se nastavi jen kdyz
+# `mapagent radio sekci < wireless wifi-device`. Na hotovem uzlu je 3 < 3
+# nepravda, takze se preskoci generovani i uklid. Genconfig tedy uklidi jen tam,
+# kde uklizet neni co.
+#
+# Nalezeno pres WebUI: oba agenti meli navic `wlan1_ap` s multi_ap=2, VIDITELNOU
+# a s backhaul SSID MAP--BH - tedy legacy fronthaul v prevleku, ktery pri hledani
+# podle SSID proklouzl. Backhaul SSID pritom nema byt pro klienty pripojitelne.
+#
+# Uci-default schvalne: spousti se i pri prvnim bootu po keep-config sysupgradu,
+# tedy presne ve chvili, kdy se stara sekce z obnoveneho configu vrati, a jeste
+# NEZ nabehne wifi - takze ta BSS ani nezacne vysilat.
+#
+# Uzel BEZ AP-MLD se nechava na pokoji: tam per-radiovy fronthaul JE fronthaul.
+
+mld_if="$(uci -q get wireless.ap_mld_1.ifname)"
+[ -n "$mld_if" ] || exit 0
+
+changed=0
+for s in $(uci show wireless 2>/dev/null | sed -n 's/^wireless\.\([^.]*\)=wifi-iface$/\1/p'); do
+	[ "$(uci -q get "wireless.$s.mode")" = "ap" ] || continue
+	[ "$(uci -q get "wireless.$s.multi_ap")" = "2" ] || continue
+	ifn="$(uci -q get "wireless.$s.ifname")"
+	[ "$ifn" = "$mld_if" ] && continue
+	logger -t drop-legacy-fronthaul "removing per-radio fronthaul $s (ifname=$ifn ssid=$(uci -q get "wireless.$s.ssid")) - AP-MLD $mld_if is the fronthaul"
+	uci -q delete "wireless.$s"
+	changed=1
+done
+[ "$changed" = 1 ] && uci commit wireless
+exit 0

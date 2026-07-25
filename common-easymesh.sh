@@ -89,6 +89,11 @@ easymesh_install_mld_scripts() {
 	# Fail-safe: uzel nerozdava DHCP, dokud to node-config.sh vyslovne nedovoli.
 	# Druhy DHCP server v mesh L2 domene tise vezme klientum internet.
 	\cp "$E/uci-defaults/98-mesh-dhcp-safe" files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/98-mesh-dhcp-safe
+
+	# Per-radiove fronthauly pryc: AP-MLD JE fronthaul (rozhodnuto 2026-07-17).
+	# Nutne jako uci-default, NE v genconfigu - tam to na provisionovanem uzlu
+	# nikdy nedobehne (viz komentar ve skriptu, prokazano instrumentaci).
+	\cp "$E/uci-defaults/99-drop-legacy-fronthaul" files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/99-drop-legacy-fronthaul
 }
 
 # --- 3) iopsys feed = JEDEN sdílený zdroj (proti 991-typu driftu) -----------
