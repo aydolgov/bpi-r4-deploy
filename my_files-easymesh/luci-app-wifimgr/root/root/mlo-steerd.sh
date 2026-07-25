@@ -91,15 +91,40 @@ retries_pct() {
 }
 
 # Get minimum RSSI for a link_id (returns "none" if link idle)
+#
+# Handles BOTH shapes of iw station dump:
+#   (a) labelled   "Link 1:"      - per-link blocks are numbered explicitly
+#   (b) unlabelled                - per-link blocks are only indented deeper (two
+#                                   tabs) than the station aggregate (one tab),
+#                                   and their order is the link order
+#
+# (b) is what iw 6.17 prints on mt7996 - captured 2026-07-25 on bpi-8g from a
+# real three-link iPhone 16. The original parser looked only for (a), so it
+# returned "none" for every link, always, and every SNR-based steering decision
+# ran on nothing. Verified against captured output of both shapes before this
+# change; (a) is kept because it is the authoritative form when present.
+#
+# Caveat worth knowing: in (b) the block order is ASSUMED to be the link order.
+# iw gives nothing better. hostapd_cli knows link ids authoritatively and would
+# be the stronger source if this assumption ever proves wrong.
+#
+# signal 0 dBm means the link is idle - the driver reports it that way. Kept.
 min_rssi() {
     local lid="$1"
     iw dev "$MLO_IF" station dump 2>/dev/null | awk -v lid="$lid" '
-        /Link/ { in_link = (index($0, "Link " lid ":") > 0) }
-        in_link && /signal:/ && /\[/ {
+        BEGIN { lid += 0; min = 0 }
+        /^Station / { link_idx = -1; next }
+        /Link[[:space:]]+[0-9]+:/ {
+            tmp=$0; sub(/.*Link[[:space:]]+/,"",tmp); sub(/:.*/, "",tmp)
+            link_idx = tmp+0; labelled = 1; next
+        }
+        /^\t\t[[:space:]]*signal:/ && /\[/ {
+            if (!labelled) link_idx++
+            if (link_idx != lid) next
             v=$0; sub(/.*signal:[[:space:]]*/,"",v); sub(/[[:space:]].*/, "",v)
             val=v+0
             if (val != 0 && (min==0 || val < min)) min=val
-            in_link=0
+            next
         }
         END { print (min+0 != 0) ? min : "none" }
     '
@@ -164,8 +189,11 @@ log_clients() {
         if (mac != "") print_client()
         mac=$2; cur_link=-1
     }
-    /Link [0-9]+:/ { tmp=$0; sub(/.*Link /,"",tmp); sub(/:.*/, "",tmp); cur_link=tmp+0 }
-    cur_link>=0 && /signal:/ && /\[/ {
+    # Same dual-shape handling as min_rssi - without it cur_link stayed -1 on
+    # iw 6.17 output and active_link was never set.
+    /Link[[:space:]]+[0-9]+:/ { tmp=$0; sub(/.*Link[[:space:]]+/,"",tmp); sub(/:.*/, "",tmp); cur_link=tmp+0; labelled=1 }
+    /^\t\t[[:space:]]*signal:/ && /\[/ {
+        if (!labelled) cur_link++
         sig=$0; sub(/.*signal:[[:space:]]*/,"",sig); sub(/[[:space:]].*/, "",sig)
         if (sig+0 != 0) active_link=cur_link
     }
