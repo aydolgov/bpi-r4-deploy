@@ -1,0 +1,11 @@
+#!/bin/sh /etc/rc.common
+# Diagnostic heartbeat. START=99 so it does not delay anything that matters, and
+# it must survive reboot because the failure it chases may follow one.
+START=99
+start() {
+	/usr/sbin/node-heartbeat 60 >/dev/null 2>&1 &
+}
+stop() {
+	kill "$(pgrep -f '/usr/sbin/node-heartbeat')" 2>/dev/null
+	return 0
+}

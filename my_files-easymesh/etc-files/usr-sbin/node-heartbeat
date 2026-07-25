@@ -1,0 +1,90 @@
+#!/bin/sh
+# /usr/sbin/node-heartbeat - leave a trace when a node dies hours after boot.
+#
+# boot-census answers "did it come up correctly and stay up for 15 minutes". On
+# 2026-07-25 bpi-x8 vanished from BOTH the mesh and the wired management port
+# about two hours after its last census sample, and nothing was left behind: no
+# crashlog, and dmesg after the powercycle only describes the new boot. The
+# census window simply did not reach the failure.
+#
+# So this writes a compact line every INTERVAL seconds to /etc/mapc/, which
+# survives sysupgrade via 97-mapc-db-keep, and - the part that matters - appends
+# any NEW kernel messages since the last sample. If the node dies again, the last
+# lines say what it looked like a minute before, and whether the kernel said
+# anything on the way out.
+#
+# Deliberately cheap: one line per minute, no shelling out to anything heavy, and
+# the file is trimmed so it cannot fill the overlay.
+
+LOG=/etc/mapc/heartbeat.log
+INTERVAL=${1:-60}
+MAX_LINES=${2:-4000}
+DMESG_MARK=/tmp/.hb-dmesg-count
+
+mkdir -p /etc/mapc 2>/dev/null
+H=$(cat /proc/sys/kernel/hostname 2>/dev/null)
+
+echo "=== HEARTBEAT START $(date '+%Y-%m-%d %H:%M:%S') $H interval=${INTERVAL}s ===" >> "$LOG"
+sync
+
+while :; do
+	t=$(cut -d. -f1 /proc/uptime)
+	now=$(date '+%H:%M:%S')
+
+	# memory and load - an OOM or a runaway would show here first
+	mem=$(awk '/^MemAvailable:/ { printf "%dM", $2 / 1024 }' /proc/meminfo)
+	load=$(cut -d' ' -f1-3 /proc/loadavg)
+
+	# the two paths that both went away: wired management and the mesh bridge
+	mgmt=down
+	for i in mxl_lan0 lan3 eth0; do
+		[ -e "/sys/class/net/$i/operstate" ] || continue
+		mgmt="$i=$(cat "/sys/class/net/$i/operstate" 2>/dev/null)"
+		break
+	done
+	br=$(cat /sys/class/net/br-lan/operstate 2>/dev/null)
+	ip=$(ip -4 addr show br-lan 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -1)
+
+	# wifi: link counts per MLD, straight from the driver
+	mld=
+	for f in /sys/kernel/debug/ieee80211/phy*/netdev:*/mt76_links_info; do
+		[ -e "$f" ] || continue
+		vl=$(sed -n 's/^valid links = //p' "$f" | head -1)
+		[ "$vl" = "0x0" ] && continue
+		n=$(echo "$f" | sed 's|.*netdev:||;s|/mt76_links_info||')
+		mld="$mld $n=$vl"
+	done
+
+	# key daemons - if one is gone the node is already half dead
+	d=
+	for p in hostapd wpa_supplicant netifd mapagent mapcontroller dnsmasq; do
+		pgrep "$p" >/dev/null 2>&1 && d="$d$p," || d="$d!$p,"
+	done
+
+	# temperature, in case this is thermal
+	tmp=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null)
+	[ -n "$tmp" ] && tmp=$((tmp / 1000))
+
+	printf '%s t%-7s %s mem=%-6s load=%-16s mgmt=%-14s br=%-5s ip=%-12s temp=%-4s daemons=%s mld=%s\n' \
+		"$H" "$t" "$now" "$mem" "$load" "$mgmt" "$br" "${ip:--}" "${tmp:--}" "$d" "${mld:- none}" >> "$LOG"
+
+	# new kernel messages since last sample - the only thing likely to explain a
+	# sudden death, and it is gone after a reboot, so it has to be captured live
+	cur=$(dmesg 2>/dev/null | wc -l)
+	prev=$(cat "$DMESG_MARK" 2>/dev/null)
+	[ -n "$prev" ] || prev=$cur
+	if [ "$cur" -gt "$prev" ]; then
+		dmesg 2>/dev/null | tail -n $((cur - prev)) | sed "s/^/  ${H} KERN /" >> "$LOG"
+	fi
+	echo "$cur" > "$DMESG_MARK"
+
+	sync
+
+	# keep the file bounded
+	lines=$(wc -l < "$LOG" 2>/dev/null)
+	if [ "${lines:-0}" -gt "$MAX_LINES" ]; then
+		tail -n $((MAX_LINES / 2)) "$LOG" > "$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG"
+	fi
+
+	sleep "$INTERVAL"
+done

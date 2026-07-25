@@ -36,13 +36,27 @@ UP=$(cut -d. -f1 /proc/uptime 2>/dev/null)
 IS_CTL=$(uci -q get mapcontroller.controller.enabled)
 [ "$IS_CTL" = "1" ] && ROLE=controller || ROLE=agent
 
-# Expected MLD link count = number of enabled radios. Derived, so adding a band
-# or a single-band node does not turn this log into a source of false alarms.
+# Expected link count is PER MLD, taken from that section's own device list -
+# not from the node's radio count. Measured 2026-07-25: a deliberately two-link
+# backhaul MLD (5+6 GHz) on a three-radio node was reported DEGRADED at every
+# boot, because the expectation was the node's three radios. A verdict that cries
+# wolf about a correct configuration is as useless as one that stays silent about
+# a broken one, and this log is meant to be read months from now.
 WANT_LINKS=0
 for d in $(uci -q show wireless | sed -n "s/^wireless\.\([^.]*\)=wifi-device$/\1/p"); do
 	[ "$(uci -q get "wireless.$d.disabled")" = "1" ] && continue
 	WANT_LINKS=$((WANT_LINKS + 1))
 done
+
+# How many radios this specific MLD interface spans. Falls back to the node radio
+# count when the interface cannot be traced back to a uci section.
+want_for() {
+	local sec n
+	sec=$(uci -q show wireless | sed -n "s/^wireless\.\([^.]*\)\.ifname='$1'\$/\1/p" | head -1)
+	[ -n "$sec" ] || { echo "$WANT_LINKS"; return; }
+	n=$(uci -q get "wireless.$sec.device" | wc -w)
+	[ "${n:-0}" -gt 0 ] && echo "$n" || echo "$WANT_LINKS"
+}
 
 # ---------------------------------------------------------------- measurements
 # MLD links: the ONLY authority is the "Link N:" blocks iw prints. hostapd_cli
@@ -138,7 +152,8 @@ fi
 FAIL=
 for m in $MLDS; do
 	n=$(mld_links "$m")
-	[ "$n" = "$WANT_LINKS" ] || FAIL="$FAIL ${m}_links=$n/$WANT_LINKS"
+	w=$(want_for "$m")
+	[ "$n" = "$w" ] || FAIL="$FAIL ${m}_links=$n/$w"
 done
 [ -n "$MLDS" ] || FAIL="$FAIL no_mld"
 if [ "$ROLE" = agent ]; then
@@ -159,7 +174,7 @@ case "$DB" in *"integrity=ok"*) ;; *integrity*) FAIL="$FAIL db_integrity" ;; esa
 # ---------------------------------------------------------------- output
 emit() {
 	echo "$H t${UP}s role=$ROLE verdict=$VERDICT"
-	for m in $MLDS; do echo "$H t${UP}s mld $m links=$(mld_links "$m")/$WANT_LINKS"; done
+	for m in $MLDS; do echo "$H t${UP}s mld $m links=$(mld_links "$m")/$(want_for "$m")"; done
 	echo "$H t${UP}s backhaul n=$BSTA_N$BSTA_DESC"
 	echo "$H t${UP}s clients=$CLIENTS mlo=$MLO_CLIENTS bh_peers=$BH_PEERS"
 	echo "$H t${UP}s hostapd links_enabled=$HOSTAPD_ENABLED/$HOSTAPD_TOTAL ctl_proc=$CTL_PROC"

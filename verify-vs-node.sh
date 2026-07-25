@@ -42,6 +42,8 @@ root/node-config.sh
 etc/init.d/mlo-steerd
 etc/init.d/wifimgr-defaults
 usr/sbin/boot-census
+usr/sbin/node-heartbeat
+etc/init.d/node-heartbeat
 usr/sbin/mlo-backhaul-setup
 etc/init.d/boot-census
 "

@@ -55,7 +55,13 @@ easymesh_install_mld_scripts() {
 	# z 25. 7. byl vzorek JEDEN studeny powercycle. Timhle se serie hromadi sama
 	# z kazdeho bootu, ktery kdokoli kdy udela, misto abychom po Petrovi chteli
 	# deset powercyclu. Verdikt si uzel odvozuje ze SVE role a SVEHO poctu radii.
-	for s in mld-link-check:S98 mld-config-check:S96 mld-report-check:S99 boot-census:S99; do
+	# node-heartbeat:S99 pise jednu radku za minutu + NOVE radky z dmesg do
+	# /etc/mapc/heartbeat.log. boot-census odpovida na 'naskocilo to a vydrzelo
+	# ctvrt hodiny'; tohle odpovida na 'co delalo minutu predtim, nez umrelo'.
+	# 2026-07-25 zmizel bpi-x8 z meshe I z drateneho mgmt portu dve hodiny po
+	# poslednim census vzorku a nezustalo po nem NIC - zadny crashlog a dmesg po
+	# powercyclu uz popisuje jen novy boot.
+	for s in mld-link-check:S98 mld-config-check:S96 mld-report-check:S99 boot-census:S99 node-heartbeat:S99; do
 		local name="${s%%:*}" rc="${s##*:}"
 		\cp "$E/usr-sbin/$name" "files/usr/sbin/$name";  chmod +x "files/usr/sbin/$name"
 		\cp "$E/init.d/$name"   "files/etc/init.d/$name"; chmod +x "files/etc/init.d/$name"
