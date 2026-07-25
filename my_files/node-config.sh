@@ -185,6 +185,21 @@ case "$ROLE" in
     uci commit dhcp
     /etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
 
+    # --- default route + DNS na controller ---
+    # Agent ma br-lan staticky, takze nedostane default route od nikoho a bez
+    # tohohle nema SAM pristup na internet: nesynchronizuje cas, nic si nestahne.
+    # Klientu se to netkne (ti maji gateway z DHCP od controlleru), takze je to
+    # tise a vypada to jako drobnost - dokud nekdo neresi, proc jeden uzel ma
+    # spatny cas nebo mu selze fetch.
+    # HW namereno 2026-07-25: bpi-8g mel gateway/dns rucne nastavene a internet
+    # jel, bpi-x8 po reflashi nemel ani jedno a byl bez internetu. Pate opakovani
+    # tehoz vzorce za jeden den (rucni oprava, nezapecena, smazana reflashem).
+    # Controller je v tomto labu vzdy .1 v mesh podsiti - stejna konvence, ze ktere
+    # se vyse pocita MESH_IP.
+    uci set network.lan.gateway='10.10.10.1'
+    uci set network.lan.dns='10.10.10.1'
+    uci commit network
+
     # agent-only: disable the controller daemon, point agent at a remote controller.
     # controller_select is an ANONYMOUS uci section → path is @controller_select[0],
     # not .controller_select (the named form fails "Entry not found"). Bit us 2026-07-11.
