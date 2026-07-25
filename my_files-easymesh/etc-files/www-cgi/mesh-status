@@ -97,10 +97,7 @@ else
 	printf '<a href="?refresh=15">auto-refresh</a></div>\n'
 fi
 
-# ----------------------------------------------------------------- clients
-# The headline: which device is connected to which node. Devices by DHCP name
-# where known; nodes by name. Backhaul links (node-to-node) are shown too but
-# labelled, so a real client is easy to tell from mesh plumbing.
+# ------------------------------------------------------------------ health
 # Roles first. Two controllers invalidate everything else on this page: on
 # 2026-07-24 topology, depth, MLD counts and steering all looked broken at once
 # and each symptom was chased separately for days, when there was one cause.
@@ -125,6 +122,10 @@ echo "controller normally runs an agent too, so a node calling itself an agent"
 echo "may still be running a controller, and this page cannot see one that never"
 echo "onboarded here. Run <code>mesh-env</code> on each node for the real answer.</p>"
 
+# ----------------------------------------------------------------- clients
+# The headline: which device is connected to which node. Devices by DHCP name
+# where known; nodes by name. Backhaul links (node-to-node) are shown too but
+# labelled, so a real client is easy to tell from mesh plumbing.
 echo "<h2>Clients &mdash; who is connected where</h2>"
 NSTA=$(q "SELECT count(*) FROM sta WHERE COALESCE(is_bsta,0)=0")
 if [ "$(q "SELECT count(*) FROM sta")" = "0" ]; then
