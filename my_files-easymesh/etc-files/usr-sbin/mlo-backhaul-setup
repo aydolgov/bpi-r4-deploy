@@ -114,6 +114,13 @@ emit_sta() {
 		echo "add_list wireless.$STA_SEC.device=$r"
 	done
 	echo "set wireless.$STA_SEC.ifname=$STA_IF"
+	# network=lan is what puts the interface into br-lan. Measured 2026-07-25:
+	# without it sta-mld-1 came up associated on two links, 4addr on, and passed
+	# no traffic at all - it simply was not a bridge port, so nothing could reach
+	# the backhaul from the bridge that holds the IP. The per-radio bSTA sections
+	# get away with omitting it because map-agent adds them to the bridge at
+	# runtime; a hand-built section has nobody to do that.
+	echo "set wireless.$STA_SEC.network=lan"
 	echo "set wireless.$STA_SEC.mode=sta"
 	echo "set wireless.$STA_SEC.mlo=1"
 	echo "set wireless.$STA_SEC.ssid=$SSID_MLD"
