@@ -118,7 +118,10 @@ case "$ROLE" in
     # --- DHCP: controller adresy rozdava (jediny v siti) ---
     # Explicitne, ne spolehnutim na default: agenti si to vypinaji ve sve vetvi a
     # politika ma byt videt na obou stranach, ne jen na jedne.
-    uci -q delete dhcp.lan.ignore
+    # Explicitni 0, ne delete: 98-mesh-dhcp-safe nastavuje bezpecny default
+    # jen kdyz hodnota NEEXISTUJE, takze smazani by ji pri pristim keep-config
+    # upgradu nechalo znovu prepnout na 1 a controller by prestal rozdavat adresy.
+    uci set dhcp.lan.ignore='0'
     uci commit dhcp
 
     # keep both mapcontroller + mapagent (collocated controller)
