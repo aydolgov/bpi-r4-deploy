@@ -18,6 +18,15 @@
 # vypnulo DHCP i na controlleru. Proto se nastavuje POUZE kdyz hodnota jeste
 # neexistuje = opravdu cerstva konfigurace; jakmile o tom node-config.sh rozhodl
 # (0 nebo 1), tenhle skript uz do toho nesaha.
+# Controller MUSI rozdavat dal. Spolehnout se jen na to, ze hodnota existuje,
+# nestaci: 2026-07-25 mel bpi-4g `dhcp.lan.ignore` NENASTAVENE, takze by tenhle
+# skript pri prvnim bootu po flashi DHCP vypnul a cela sit by prisla o adresy i
+# gateway - node-config.sh, ktery to vraci na 0, se spousti az RUCNE potom.
+# Zachyceno snimkem pred flashem, ne az skodou. Role je citelna z configu jeste
+# nez nabehne jakykoli demon, takze se na ni da spolehnout i tady.
+[ "$(uci -q get mapcontroller.controller.enabled)" = "1" ] && exit 0
+
+# Uz rozhodnuto (0 nebo 1) -> nesahat. Viz past s uci-defaults po keep-config vyse.
 [ -n "$(uci -q get dhcp.lan.ignore)" ] && exit 0
 uci set dhcp.lan.ignore='1'
 uci commit dhcp
