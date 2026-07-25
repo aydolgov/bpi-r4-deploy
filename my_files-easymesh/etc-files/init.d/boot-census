@@ -1,0 +1,32 @@
+#!/bin/sh /etc/rc.common
+
+# Records this boot into /etc/mapc/boot-census.log so reliability becomes a
+# series instead of an anecdote. See /usr/sbin/boot-census for why.
+#
+# START=99 puts it after the mld-*-check watchdogs. mld-report-check already
+# waits 150 s because mld-link-check may spend ~105 s deciding a link is missing
+# and restarting wifi; censusing before that finishes would record a deficit that
+# is still being repaired, and every such line would be a false DEGRADED.
+#
+# Two samples per boot, on purpose. SETTLE catches "did it come up correctly",
+# LATE catches "did it stay up" - on 2026-07-24 x8's radios were up at first and
+# had fallen over half an hour later, and a single early sample would have called
+# that boot clean.
+
+START=99
+
+SETTLE=200
+LATE=900
+
+start() {
+	(
+		sleep "$SETTLE"
+		/usr/sbin/boot-census --log
+		sleep $((LATE - SETTLE))
+		/usr/sbin/boot-census --log-late
+	) >/dev/null 2>&1 &
+}
+
+stop() {
+	return 0
+}

@@ -41,6 +41,8 @@ root/mlo-steerd.sh
 root/node-config.sh
 etc/init.d/mlo-steerd
 etc/init.d/wifimgr-defaults
+usr/sbin/boot-census
+etc/init.d/boot-census
 "
 
 # Paths that must NOT be in the image. An absence check belongs in the same pass:

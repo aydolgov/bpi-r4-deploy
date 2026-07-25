@@ -1,0 +1,199 @@
+#!/bin/sh
+# /usr/sbin/boot-census - record what this node looks like once the mesh settled.
+#
+# Why this exists: on 2026-07-25 the fleet survived a cold powercycle with 44 of
+# 44 stable facts unchanged. That is a sample of ONE. Reliability is the
+# deliverable here, and a single successful boot cannot distinguish "deterministic"
+# from "lucky" - the failures we chase (MLD short a link, bSTA wedged, split-brain,
+# stale BSS) are all intermittent. Ten boots would tell us; asking a human to
+# powercycle ten times to get them will not happen.
+#
+# So every boot records itself. The log lives in /etc/mapc/, which
+# 97-mapc-db-keep puts in /etc/sysupgrade.conf, so the series survives firmware
+# upgrades too. Every reboot and every power cut anyone ever does becomes a data
+# point for free, and the question "is this deterministic?" becomes a grep.
+#
+# Expectations are DERIVED, never hardcoded: the node reads its own role and its
+# own radio count and judges itself against those. A controller is expected to
+# serve DHCP and have no backhaul STA; an agent the exact opposite. Hardcoding
+# would make the log lie on the next node we add.
+#
+# Usage: boot-census [--log|--log-late|--verdict-only]
+#   default         print the census to stdout
+#   --log           start a new BOOT entry in /etc/mapc/boot-census.log
+#   --log-late      append to the current BOOT entry without starting a new one,
+#                   so a late re-check (radios that come up and fall over again a
+#                   few minutes later) does not read as an extra boot
+#   --verdict-only  print only the verdict line
+
+LOG=/etc/mapc/boot-census.log
+MAX_BOOTS=40
+
+H=$(cat /proc/sys/kernel/hostname 2>/dev/null)
+UP=$(cut -d. -f1 /proc/uptime 2>/dev/null)
+
+# ---------------------------------------------------------------- role & expect
+IS_CTL=$(uci -q get mapcontroller.controller.enabled)
+[ "$IS_CTL" = "1" ] && ROLE=controller || ROLE=agent
+
+# Expected MLD link count = number of enabled radios. Derived, so adding a band
+# or a single-band node does not turn this log into a source of false alarms.
+WANT_LINKS=0
+for d in $(uci -q show wireless | sed -n "s/^wireless\.\([^.]*\)=wifi-device$/\1/p"); do
+	[ "$(uci -q get "wireless.$d.disabled")" = "1" ] && continue
+	WANT_LINKS=$((WANT_LINKS + 1))
+done
+
+# ---------------------------------------------------------------- measurements
+# MLD links: the ONLY authority is the "Link N:" blocks iw prints. hostapd_cli
+# list_sta reports every MLD station on every affiliated link instance - measured
+# 2026-07-25, it listed a Wi-Fi 5 iPhone 6s on link0/1/2 - so it cannot count
+# links for anything.
+mld_links() {
+	iw dev "$1" info 2>/dev/null | grep -c '^[[:space:]]*- link ID'
+}
+
+MLDS=$(iw dev 2>/dev/null | awk '/^\tInterface/ { print $2 }' | grep -- '-mld-')
+
+# Backhaul STA: associated upstream BSSID and the rate, per managed iface.
+BSTA_N=0
+BSTA_DESC=
+for i in $(iw dev 2>/dev/null | awk '/^\tInterface/ { print $2 }'); do
+	[ "$(iw dev "$i" info 2>/dev/null | awk '/type/ { print $2 }')" = "managed" ] || continue
+	l=$(iw dev "$i" link 2>/dev/null)
+	case "$l" in
+	Connected*)
+		BSSID=$(echo "$l" | sed -n '1s/.*Connected to \([0-9a-f:]*\).*/\1/p')
+		FREQ=$(echo "$l" | sed -n 's/^[[:space:]]*freq:[[:space:]]*\([0-9]*\).*/\1/p' | head -1)
+		# Highest rx rate in the dump, not the first: a dump carries the
+		# aggregate plus one block per link, and the first line is whichever
+		# the driver happened to emit first. Measured 2026-07-25 - taking
+		# head -1 reported 6.0 Mbps for a backhaul actually running 5764.
+		RATE=$(iw dev "$i" station dump 2>/dev/null \
+			| awk '/rx bitrate:/ { if ($3 + 0 > m) m = $3 + 0 } END { printf "%.0f", m }')
+		BSTA_N=$((BSTA_N + 1))
+		BSTA_DESC="$BSTA_DESC $i->${BSSID}@${FREQ}MHz/${RATE}Mbps"
+		;;
+	esac
+done
+
+# Clients: AP side only. A station dump on a bSTA lists the upstream AP as a
+# "station" - that is how a 2-client fleet once read as 5. Backhaul peers live on
+# AP/VLAN children (wlan2-1.staN), so those are counted separately from clients.
+CLIENTS=0
+MLO_CLIENTS=0
+BH_PEERS=0
+for i in $(iw dev 2>/dev/null | awk '/^\tInterface/ { print $2 }'); do
+	t=$(iw dev "$i" info 2>/dev/null | awk '/type/ { print $2 }')
+	case "$t" in
+	AP) ;;
+	AP/VLAN)
+		BH_PEERS=$((BH_PEERS + $(iw dev "$i" station dump 2>/dev/null | grep -c '^Station')))
+		continue
+		;;
+	*) continue ;;
+	esac
+	d=$(iw dev "$i" station dump 2>/dev/null)
+	n=$(echo "$d" | grep -c '^Station')
+	CLIENTS=$((CLIENTS + n))
+	# an MLO client is one whose dump carries more than one Link block
+	MLO_CLIENTS=$((MLO_CLIENTS + $(echo "$d" | awk '
+		/^Station/ { if (l > 1) m++; l = 0 }
+		/^\tLink [0-9]+:/ { l++ }
+		END { if (l > 1) m++; print m + 0 }')))
+done
+
+HOSTAPD_ENABLED=0
+HOSTAPD_TOTAL=0
+for c in /var/run/hostapd/*_link[0-9]; do
+	[ -e "$c" ] || continue
+	HOSTAPD_TOTAL=$((HOSTAPD_TOTAL + 1))
+	[ "$(hostapd_cli -i "$(basename "$c")" status 2>/dev/null | sed -n 's/^state=//p')" = "ENABLED" ] \
+		&& HOSTAPD_ENABLED=$((HOSTAPD_ENABLED + 1))
+done
+
+CTL_PROC=no
+for f in /proc/[0-9]*/comm; do
+	[ "$(cat "$f" 2>/dev/null)" = "mapcontroller" ] && { CTL_PROC=yes; break; }
+done
+
+REG=$(iw reg get 2>/dev/null | sed -n 's/^country \([A-Z][A-Z]\).*/\1/p' | head -1)
+IFACES=$(uci -q show wireless | grep -c '=wifi-iface')
+PINS=$(uci -q show wireless | grep -c '\.macaddr=')
+DHCP_IGNORE=$(uci -q get dhcp.lan.ignore)
+DHCP_LISTEN=$(netstat -uln 2>/dev/null | grep -c ':67 ')
+E_ADDBA=$(logread 2>/dev/null | grep -c 'wrong addBA')
+E_FREQ=$(logread 2>/dev/null | grep -c 'Frequency set failed')
+E_RETRY=$(logread 2>/dev/null | grep -c 'retry_setup_failed')
+
+DB=
+if [ -f /etc/mapc/mapc.db ]; then
+	DB="integrity=$(sqlite3 /etc/mapc/mapc.db 'pragma integrity_check;' 2>/dev/null | head -1)"
+	for t in agent bss apmld affiliated_ap ttlm topology_link sta; do
+		DB="$DB $t=$(sqlite3 /etc/mapc/mapc.db "select count(*) from $t;" 2>/dev/null)"
+	done
+fi
+
+# ---------------------------------------------------------------- verdict
+FAIL=
+for m in $MLDS; do
+	n=$(mld_links "$m")
+	[ "$n" = "$WANT_LINKS" ] || FAIL="$FAIL ${m}_links=$n/$WANT_LINKS"
+done
+[ -n "$MLDS" ] || FAIL="$FAIL no_mld"
+if [ "$ROLE" = agent ]; then
+	[ "$BSTA_N" -ge 1 ] || FAIL="$FAIL no_backhaul"
+	[ "$CTL_PROC" = no ] || FAIL="$FAIL controller_running_on_agent"
+	[ "$DHCP_LISTEN" = 0 ] || FAIL="$FAIL agent_serves_dhcp"
+else
+	[ "$CTL_PROC" = yes ] || FAIL="$FAIL controller_not_running"
+	[ "$DHCP_LISTEN" -ge 1 ] || FAIL="$FAIL controller_no_dhcp"
+fi
+[ "$HOSTAPD_TOTAL" = "$HOSTAPD_ENABLED" ] || FAIL="$FAIL hostapd=$HOSTAPD_ENABLED/$HOSTAPD_TOTAL"
+[ "$E_FREQ" = 0 ] || FAIL="$FAIL freqset=$E_FREQ"
+[ "$E_RETRY" = 0 ] || FAIL="$FAIL retry_setup=$E_RETRY"
+case "$DB" in *"integrity=ok"*) ;; *integrity*) FAIL="$FAIL db_integrity" ;; esac
+
+[ -z "$FAIL" ] && VERDICT="OK" || VERDICT="DEGRADED:$FAIL"
+
+# ---------------------------------------------------------------- output
+emit() {
+	echo "$H t${UP}s role=$ROLE verdict=$VERDICT"
+	for m in $MLDS; do echo "$H t${UP}s mld $m links=$(mld_links "$m")/$WANT_LINKS"; done
+	echo "$H t${UP}s backhaul n=$BSTA_N$BSTA_DESC"
+	echo "$H t${UP}s clients=$CLIENTS mlo=$MLO_CLIENTS bh_peers=$BH_PEERS"
+	echo "$H t${UP}s hostapd links_enabled=$HOSTAPD_ENABLED/$HOSTAPD_TOTAL ctl_proc=$CTL_PROC"
+	echo "$H t${UP}s reg=$REG wifi_iface=$IFACES pins=$PINS dhcp_ignore=${DHCP_IGNORE:-unset} dhcp_listen=$DHCP_LISTEN"
+	echo "$H t${UP}s errors addba=$E_ADDBA freqset=$E_FREQ retry_setup=$E_RETRY"
+	[ -n "$DB" ] && echo "$H t${UP}s db $DB"
+}
+
+case "${1:-}" in
+--verdict-only)
+	echo "$H t${UP}s role=$ROLE verdict=$VERDICT"
+	;;
+--log-late)
+	mkdir -p /etc/mapc 2>/dev/null
+	emit >> "$LOG" 2>/dev/null
+	;;
+--log)
+	mkdir -p /etc/mapc 2>/dev/null
+	# boot sequence number: count previous BOOT markers, so one grep tells you
+	# how many boots are in the series
+	SEQ=$(( $(grep -c '^=== BOOT ' "$LOG" 2>/dev/null) + 1 ))
+	{
+		echo "=== BOOT $SEQ $(date '+%Y-%m-%d %H:%M:%S') $H ==="
+		emit
+	} >> "$LOG" 2>/dev/null
+	# trim to the last MAX_BOOTS boots
+	total=$(grep -c '^=== BOOT ' "$LOG" 2>/dev/null)
+	if [ "${total:-0}" -gt "$MAX_BOOTS" ]; then
+		drop=$((total - MAX_BOOTS))
+		awk -v d="$drop" '/^=== BOOT /{ seen++ } seen > d' "$LOG" > "$LOG.tmp" 2>/dev/null \
+			&& mv "$LOG.tmp" "$LOG"
+	fi
+	;;
+*)
+	emit
+	;;
+esac

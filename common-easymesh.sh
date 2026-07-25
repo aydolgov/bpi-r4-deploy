@@ -50,7 +50,12 @@ easymesh_install_mld_scripts() {
 	mkdir -p files/usr/sbin files/etc/init.d files/etc/rc.d files/www/cgi-bin
 
 	local s
-	for s in mld-link-check:S98 mld-config-check:S96 mld-report-check:S99; do
+	# boot-census:S99 zapisuje kazdy boot do /etc/mapc/boot-census.log (prezije
+	# sysupgrade diky 97-mapc-db-keep). Spolehlivost je deliverable, ale mereni
+	# z 25. 7. byl vzorek JEDEN studeny powercycle. Timhle se serie hromadi sama
+	# z kazdeho bootu, ktery kdokoli kdy udela, misto abychom po Petrovi chteli
+	# deset powercyclu. Verdikt si uzel odvozuje ze SVE role a SVEHO poctu radii.
+	for s in mld-link-check:S98 mld-config-check:S96 mld-report-check:S99 boot-census:S99; do
 		local name="${s%%:*}" rc="${s##*:}"
 		\cp "$E/usr-sbin/$name" "files/usr/sbin/$name";  chmod +x "files/usr/sbin/$name"
 		\cp "$E/init.d/$name"   "files/etc/init.d/$name"; chmod +x "files/etc/init.d/$name"
