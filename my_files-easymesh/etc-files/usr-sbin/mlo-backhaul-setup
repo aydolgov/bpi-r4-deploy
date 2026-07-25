@@ -1,0 +1,225 @@
+#!/bin/sh
+# /usr/sbin/mlo-backhaul-setup - stand up a real MLO backhaul: an AP-MLD on the
+# serving node and an MLD STA on the leaf, instead of today's single-link 6 GHz
+# backhaul.
+#
+# WHY THIS EXISTS
+# ---------------
+# The goal is full MLO with no legacy on the nodes. Today the backhaul is the
+# opposite of that: three separate per-radio BSSes all called MAP--BH (wlan0-1,
+# wlan1-1, wlan2-1), each with its own key - measured 2026-07-25, the 6 GHz one
+# even has a different PSK from 2.4/5 GHz. hostapd confirms they are not an MLD:
+#
+#   bss[0]=ap-mld-1  ssid=OpenWrt-  mld_addr=3a:fb:...  mld_id=0
+#   bss[1]=MAP--BH   ssid=MAP--BH   (no mld_addr at all)
+#
+# An MLD STA cannot associate to those, because MLO requires an AP-MLD on the
+# other side. So a real MLO backhaul needs a SECOND AP-MLD - the "1+2" topology.
+#
+# There is a second reason, and it is the one that decides the project. Measured
+# 2026-07-25: the only WiFi 7 client in the lab, an iPhone 16, reports
+# max_simul_links=1 and emlsr_support=0 - it is MLSR and never answers a
+# Negotiated TTLM request. No phone will ever give us an MLMR peer. Our own
+# router as an MLD STA (three radios on MT7996) is the only MLMR peer available,
+# so this backhaul is also the only way to demonstrate Neg-TTLM at all.
+#
+# FEASIBILITY - checked in the sources, not assumed
+# -------------------------------------------------
+#   netifd   lib/netifd/wireless.uc keys MLD vifs by ifname (mlo_vifs[ifname]),
+#            so more than one MLD is supported, and mode='sta' with mlo=1 is
+#            explicitly allowed: (wildcard(htmode,'EHT*') || data.mode == 'sta')
+#   hostapd  struct hostapd_mld **mld - no fixed maximum. BSSes join one MLD by
+#            carrying the same bss=<name> across the per-phy configs.
+#   mt76     mt7996 get_own_mld_idx(): group MLD idx 0-15, i.e. up to 16 MLD
+#            groups per chip; remap idx 0-15. We need three.
+#
+# So this is configuration, not a patch.
+#
+# WHY IT IS NOT AUTOMATIC
+# -----------------------
+# Shipping this as a uci-default would change every node on flash and could take
+# the mesh down for an experiment. It ships as a tool with no init.d script - the
+# same conclusion as bssid-pin, where leaving out the rc.d symlink turned out NOT
+# to disable a service, because the image build enables any init script with START=.
+#
+# It also deliberately KEEPS the legacy per-radio MAP--BH BSSes on the serving
+# node and gives the new AP-MLD its own SSID. An agent that still runs a
+# single-link bSTA keeps its uplink, so a failed experiment costs one leaf rather
+# than the mesh.
+
+SSID_MLD="MAP--BH-MLD"
+AP_SEC="ap_mld_2"
+STA_SEC="bsta_mld_1"
+AP_IF="ap-mld-2"
+STA_IF="sta-mld-1"
+# Radios carrying the backhaul MLD. 5 GHz + 6 GHz on purpose: 2.4 GHz adds no
+# usable backhaul capacity but costs a BSS on that radio, while 5+6 is exactly
+# the pair worth having - 6 GHz for throughput, 5 GHz for the case the 6 GHz link
+# does not survive a wall. Today's single 6 GHz link has no such fallback.
+RADIOS="radio1 radio2"
+
+usage() {
+	cat <<EOF
+usage: mlo-backhaul-setup <command>
+
+  --status        show what is configured and what is running
+  --dry-run-ap    print the uci commands for the serving node, apply nothing
+  --dry-run-sta   print the uci commands for the leaf node, apply nothing
+  --apply-ap      configure the backhaul AP-MLD on this node (serving side)
+  --apply-sta     configure the MLD STA on this node (leaf side)
+  --revert        remove both sections created here, restore per-radio bSTAs
+  --key <hex>     key to use with --apply-*; required, both sides must match
+
+Apply, then reboot. Not 'wifi reload': a runtime reload assigns chanctx in an
+order the driver rejects with 'Frequency set failed (EPERM)', which is how the
+MLD came up short a link on 2026-07-24.
+EOF
+}
+
+# ---------------------------------------------------------------- helpers
+have_radio() {
+	[ -n "$(uci -q get "wireless.$1")" ] && [ "$(uci -q get "wireless.$1.disabled")" != "1" ]
+}
+
+emit_ap() {
+	echo "delete wireless.$AP_SEC"
+	echo "set wireless.$AP_SEC=wifi-iface"
+	for r in $RADIOS; do
+		have_radio "$r" || { echo "# SKIP $r - missing or disabled" >&2; continue; }
+		echo "add_list wireless.$AP_SEC.device=$r"
+	done
+	echo "set wireless.$AP_SEC.ifname=$AP_IF"
+	echo "set wireless.$AP_SEC.network=lan"
+	echo "set wireless.$AP_SEC.mode=ap"
+	echo "set wireless.$AP_SEC.mlo=1"
+	echo "set wireless.$AP_SEC.ssid=$SSID_MLD"
+	echo "set wireless.$AP_SEC.encryption=sae"
+	echo "set wireless.$AP_SEC.key=$KEY"
+	echo "set wireless.$AP_SEC.sae_pwe=2"
+	echo "set wireless.$AP_SEC.ieee80211w=2"
+	# Backhaul AP in Multi-AP terms, and 4-address so a bridged bSTA works.
+	echo "set wireless.$AP_SEC.multi_ap=1"
+	echo "set wireless.$AP_SEC.wds_sta=1"
+	# hidden=0 is NOT cosmetic. A hidden backhaul BSS on 6 GHz took down the whole
+	# phy on 2026-07-21 (MBSSID x hidden); the root cause was a template that
+	# shipped hidden=1. Never let this one default.
+	echo "set wireless.$AP_SEC.hidden=0"
+}
+
+emit_sta() {
+	echo "delete wireless.$STA_SEC"
+	echo "set wireless.$STA_SEC=wifi-iface"
+	for r in $RADIOS; do
+		have_radio "$r" || { echo "# SKIP $r - missing or disabled" >&2; continue; }
+		echo "add_list wireless.$STA_SEC.device=$r"
+	done
+	echo "set wireless.$STA_SEC.ifname=$STA_IF"
+	echo "set wireless.$STA_SEC.mode=sta"
+	echo "set wireless.$STA_SEC.mlo=1"
+	echo "set wireless.$STA_SEC.ssid=$SSID_MLD"
+	echo "set wireless.$STA_SEC.encryption=sae"
+	echo "set wireless.$STA_SEC.key=$KEY"
+	echo "set wireless.$STA_SEC.multi_ap=1"
+	echo "set wireless.$STA_SEC.multi_ap_profile=3"
+	echo "set wireless.$STA_SEC.wds=1"
+	# The per-radio bSTAs must go down, or two stations on the same phy chase the
+	# same SSID. Their sections are kept, only disabled, so --revert is exact.
+	for s in $(uci -q show wireless | sed -n "s/^wireless\.\(default_sta_radio[0-9]*\)\.mode='sta'$/\1/p"); do
+		echo "set wireless.$s.disabled=1"
+	done
+}
+
+apply() {
+	# uci batch, so a syntax error applies nothing rather than half of it
+	"$1" | grep -v '^#' | uci batch && uci commit wireless
+}
+
+# ---------------------------------------------------------------- status
+status() {
+	echo "== konfigurace =="
+	for s in "$AP_SEC" "$STA_SEC"; do
+		if [ -n "$(uci -q get "wireless.$s")" ]; then
+			printf '  %-12s ssid=%-14s mlo=%-2s device=%s\n' "$s" \
+				"$(uci -q get "wireless.$s.ssid")" \
+				"$(uci -q get "wireless.$s.mlo")" \
+				"$(uci -q get "wireless.$s.device" | tr '\n' ' ')"
+		else
+			printf '  %-12s (neni)\n' "$s"
+		fi
+	done
+	echo "  per-radio bSTA:"
+	for s in $(uci -q show wireless | sed -n "s/^wireless\.\(default_sta_radio[0-9]*\)\.mode='sta'$/\1/p"); do
+		printf '    %-22s disabled=%s\n' "$s" "$(uci -q get "wireless.$s.disabled")"
+	done
+
+	echo "== bezi =="
+	for i in $(iw dev 2>/dev/null | awk '/^\tInterface/ { print $2 }'); do
+		case "$i" in
+		"$AP_IF" | "$STA_IF") ;;
+		*) continue ;;
+		esac
+		echo "  $i:"
+		iw dev "$i" info 2>/dev/null | sed -n 's/^\t\( *- link ID.*\)/    \1/p;s/^\t\(   channel.*\)/    \1/p'
+		iw dev "$i" link 2>/dev/null | head -1 | sed 's/^/    /'
+	done
+	[ -z "$(iw dev 2>/dev/null | grep -E "$AP_IF|$STA_IF")" ] && echo "  (zadne MLD backhaul rozhrani)"
+
+	# The driver's own view, which is the only place the MLD grouping is visible.
+	# A second AP-MLD must show up here as a distinct "group mld id"; if both MLDs
+	# report group 0, they were merged and this did not do what it looks like.
+	echo "== driver: mt76_links_info =="
+	for d in /sys/kernel/debug/ieee80211/phy*/netdev:*/mt76_links_info; do
+		[ -e "$d" ] || continue
+		ifc=$(echo "$d" | sed 's|.*netdev:||;s|/mt76_links_info||')
+		echo "  --- $ifc ---"
+		sed -n '1,6p' "$d" 2>/dev/null | sed 's/^/    /'
+		grep -E 'link\[|band_idx' "$d" 2>/dev/null | sed 's/^/    /'
+	done
+}
+
+# ---------------------------------------------------------------- main
+KEY=
+cmd="${1:-}"
+shift 2>/dev/null
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--key) KEY="$2"; shift 2 ;;
+	*) shift ;;
+	esac
+done
+
+case "$cmd" in
+--status)
+	status
+	;;
+--dry-run-ap)
+	KEY="${KEY:-<KEY>}"; emit_ap
+	;;
+--dry-run-sta)
+	KEY="${KEY:-<KEY>}"; emit_sta
+	;;
+--apply-ap)
+	[ -n "$KEY" ] || { echo "chybi --key <hex> (obe strany musi mit stejny)" >&2; exit 2; }
+	apply emit_ap && echo "AP-MLD backhaul nakonfigurovan. Ted REBOOT, ne wifi reload."
+	;;
+--apply-sta)
+	[ -n "$KEY" ] || { echo "chybi --key <hex> (obe strany musi mit stejny)" >&2; exit 2; }
+	apply emit_sta && echo "MLD STA nakonfigurovana. Ted REBOOT, ne wifi reload."
+	;;
+--revert)
+	uci -q delete "wireless.$AP_SEC"
+	uci -q delete "wireless.$STA_SEC"
+	for s in $(uci -q show wireless | sed -n "s/^wireless\.\(default_sta_radio[0-9]*\)\.mode='sta'$/\1/p"); do
+		# radio2 (6 GHz) was the single-link uplink before this experiment
+		case "$s" in
+		default_sta_radio2) uci set "wireless.$s.disabled=0" ;;
+		esac
+	done
+	uci commit wireless
+	echo "Vraceno na per-radio bSTA. Ted REBOOT."
+	;;
+*)
+	usage
+	exit 2
+	;;
+esac

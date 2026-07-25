@@ -79,6 +79,18 @@ easymesh_install_mld_scripts() {
 	# Nástroj zůstává spustitelný ručně, když někdo pinovat chce.
 	\cp "$E/usr-sbin/bssid-pin" files/usr/sbin/bssid-pin; chmod +x files/usr/sbin/bssid-pin
 
+	# mlo-backhaul-setup: postavi REALNY MLO backhaul (druhe AP-MLD + MLD STA)
+	# misto dnesniho jednolinkoveho 6GHz spoje. JEN nastroj, ZADNY init.d — pousti
+	# se vedome na jednom uzlu, protoze nespravna konfigurace backhaulu shodi mesh.
+	#
+	# Proc to vubec chceme (naměřeno 2026-07-25): backhaul dnes NENI MLD — tri
+	# oddelene per-radiove BSS MAP--BH, kazda s vlastnim klicem, driver hlasi
+	# `valid links = 0x0`. MLD STA se proti nim navazat nemuze. A druhy duvod je
+	# tezsi: iPhone 16 je MLSR (max_simul_links=1, emlsr_support=0) a na Neg-TTLM
+	# neodpovi, takze MLMR protistranu nam da JEDINE nas vlastni router jako MLD
+	# STA. Tenhle backhaul je proto i jedina cesta, jak Neg-TTLM predvest.
+	\cp "$E/usr-sbin/mlo-backhaul-setup" files/usr/sbin/mlo-backhaul-setup; chmod +x files/usr/sbin/mlo-backhaul-setup
+
 	# mesh-env: vypise nastaveni, ktera zijou MIMO /etc/config (U-Boot env:
 	# netmode, owrt_country, disable_mlo) a co z nich reálne platí. Ty hodnoty
 	# ridi chovani genconfigu i regulacni domain, v zadnem uci dumpu nejsou a
