@@ -85,6 +85,10 @@ easymesh_install_mld_scripts() {
 
 	# mapc.db keep přes sysupgrade (deterministic recovery vrstva)
 	\cp "$E/uci-defaults/97-mapc-db-keep" files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/97-mapc-db-keep
+
+	# Fail-safe: uzel nerozdava DHCP, dokud to node-config.sh vyslovne nedovoli.
+	# Druhy DHCP server v mesh L2 domene tise vezme klientum internet.
+	\cp "$E/uci-defaults/98-mesh-dhcp-safe" files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/98-mesh-dhcp-safe
 }
 
 # --- 3) iopsys feed = JEDEN sdílený zdroj (proti 991-typu driftu) -----------

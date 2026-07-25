@@ -1,0 +1,24 @@
+#!/bin/sh
+# Fail-safe default: uzel NErozdava DHCP, dokud mu to nekdo vyslovne nedovoli.
+#
+# Mesh je jedna L2 domena (br-lan premostena pres backhaul). Druhy DHCP server v
+# ni odpovi klientovi driv nez controller a vnuti mu SAM SEBE jako gateway; agent
+# nikam nerouti, takze klient ma adresu, asociaci i signal a ZADNY internet.
+# Vypada to jako vada radia. HW 2026-07-25: iPhone 11 dostal 10.10.10.111 od
+# bpi-x8 a byl bez internetu, zbyle dva telefony na tomtez AP-MLD jely.
+#
+# Obraceny default schvalne: uzel, ktery adresy nerozdava, nerozbije nic a je to
+# na nem hned videt. Uzel, ktery je rozdava spatne, rozbije klienty tise.
+# Nebezpecna varianta ma vyzadovat vyslovne rozhodnuti - to dela node-config.sh,
+# ktery na controlleru nastavi ignore=0 a na agentovi ignore=1.
+#
+# POZOR na past, ktera dnes uz jednou stala den (99-pro-8x-network):
+# uci-defaults se spousti ZNOVU i pri prvnim bootu po keep-config sysupgradu, nad
+# OBNOVENOU konfiguraci. Slepe "uci set ignore=1" by tedy pri kazdem upgradu
+# vypnulo DHCP i na controlleru. Proto se nastavuje POUZE kdyz hodnota jeste
+# neexistuje = opravdu cerstva konfigurace; jakmile o tom node-config.sh rozhodl
+# (0 nebo 1), tenhle skript uz do toho nesaha.
+[ -n "$(uci -q get dhcp.lan.ignore)" ] && exit 0
+uci set dhcp.lan.ignore='1'
+uci commit dhcp
+exit 0
