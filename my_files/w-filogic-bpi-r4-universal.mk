@@ -215,7 +215,10 @@ define Device/bananapi_bpi-r4
   DEVICE_DTS_CONFIG := config-mt7988a-bananapi-bpi-r4
   $(call Device/bananapi_bpi-r4-common-4gb)
   ARTIFACTS := emmc-img.bin nvme-img.bin sdcard.img.gz
-  DEVICE_PACKAGES += docker dockerd docker-compose containerd runc
+  # docker vyndan 2026-07-25: mesh uzly ho nepouzivaji, byl to jen balast
+  # v eMMC/SD variantach (NAND lean varianty ho uz vynechavaly kvuli 128 MiB).
+  # Do image se dostaval PRES DEVICE_PACKAGES, ne pres .config - tam je =m,
+  # takze v root-mediatek nebyl videt a v /rom na uzlu ano.
 endef
 TARGET_DEVICES += bananapi_bpi-r4
 
@@ -225,7 +228,10 @@ define Device/bananapi_bpi-r4-poe
   DEVICE_DTS_CONFIG := config-mt7988a-bananapi-bpi-r4-poe
   $(call Device/bananapi_bpi-r4-common-4gb)
   DEVICE_PACKAGES += mt798x-2p5g-phy-firmware-internal kmod-mt798x-2p5g-phy
-  DEVICE_PACKAGES += docker dockerd docker-compose containerd runc
+  # docker vyndan 2026-07-25: mesh uzly ho nepouzivaji, byl to jen balast
+  # v eMMC/SD variantach (NAND lean varianty ho uz vynechavaly kvuli 128 MiB).
+  # Do image se dostaval PRES DEVICE_PACKAGES, ne pres .config - tam je =m,
+  # takze v root-mediatek nebyl videt a v /rom na uzlu ano.
   ARTIFACTS := emmc-img.bin nvme-img.bin sdcard.img.gz
   SUPPORTED_DEVICES += bananapi,bpi-r4-2g5
   UBINIZE_PARTS := fip=:$(STAGING_DIR_IMAGE)/mt7988_bananapi_bpi-r4-poe-snand-u-boot.fip
@@ -238,7 +244,10 @@ define Device/bananapi_bpi-r4-8gb
   DEVICE_DTS_CONFIG := config-mt7988a-bananapi-bpi-r4
   $(call Device/bananapi_bpi-r4-common-8gb)
   ARTIFACTS := emmc-img.bin nvme-img.bin sdcard.img.gz
-  DEVICE_PACKAGES += docker dockerd docker-compose containerd runc
+  # docker vyndan 2026-07-25: mesh uzly ho nepouzivaji, byl to jen balast
+  # v eMMC/SD variantach (NAND lean varianty ho uz vynechavaly kvuli 128 MiB).
+  # Do image se dostaval PRES DEVICE_PACKAGES, ne pres .config - tam je =m,
+  # takze v root-mediatek nebyl videt a v /rom na uzlu ano.
   SUPPORTED_DEVICES += bananapi,bpi-r4
 endef
 TARGET_DEVICES += bananapi_bpi-r4-8gb
@@ -249,7 +258,10 @@ define Device/bananapi_bpi-r4-poe-8gb
   DEVICE_DTS_CONFIG := config-mt7988a-bananapi-bpi-r4-poe
   $(call Device/bananapi_bpi-r4-common-8gb)
   DEVICE_PACKAGES += mt798x-2p5g-phy-firmware-internal kmod-mt798x-2p5g-phy
-  DEVICE_PACKAGES += docker dockerd docker-compose containerd runc
+  # docker vyndan 2026-07-25: mesh uzly ho nepouzivaji, byl to jen balast
+  # v eMMC/SD variantach (NAND lean varianty ho uz vynechavaly kvuli 128 MiB).
+  # Do image se dostaval PRES DEVICE_PACKAGES, ne pres .config - tam je =m,
+  # takze v root-mediatek nebyl videt a v /rom na uzlu ano.
   ARTIFACTS := emmc-img.bin nvme-img.bin sdcard.img.gz
   SUPPORTED_DEVICES += bananapi,bpi-r4-2g5
   BPI_R4_FIP_NAME := bananapi_bpi-r4-poe
