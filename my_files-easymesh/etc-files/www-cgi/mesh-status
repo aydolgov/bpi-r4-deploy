@@ -175,6 +175,23 @@ done
 echo "</table>"
 
 # ---------------------------------------------------------------- coverage
+# Some node settings live in the U-Boot environment, not in uci: netmode (drives
+# whether genconfig emits MLD affiliation or legacy per-radio fronthauls),
+# owrt_country and disable_mlo. They are per unit, survive every sysupgrade, and
+# no EasyMesh TLV carries them, so this page cannot show them for the agents -
+# only the node itself can. Point at the tool instead of pretending otherwise.
+echo "<h2>Settings outside uci</h2>"
+echo "<p class=note>netmode, owrt_country and disable_mlo live in the U-Boot"
+echo "environment. They change how a node behaves, appear in no uci dump, are per"
+echo "unit and survive sysupgrade -n. No TLV carries them, so run"
+echo "<code>mesh-env</code> on the node you are asking about.</p>"
+echo "<table><tr><th>this controller<th>value</tr>"
+for v in netmode owrt_country disable_mlo; do
+	val=$(fw_printenv -n "$v" 2>/dev/null)
+	echo "<tr><td><code>$v</code><td>$(dash "$val")</tr>"
+done
+echo "</table>"
+
 echo "<h2>Raw tables (for us)</h2>"
 echo "<p class=note>The MAC-level inventory: one line per table, how many of its"
 echo "columns ever hold a value. This is the debug view - the sections above are"

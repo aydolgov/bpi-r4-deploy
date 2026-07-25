@@ -74,6 +74,12 @@ easymesh_install_mld_scripts() {
 	# Nástroj zůstává spustitelný ručně, když někdo pinovat chce.
 	\cp "$E/usr-sbin/bssid-pin" files/usr/sbin/bssid-pin; chmod +x files/usr/sbin/bssid-pin
 
+	# mesh-env: vypise nastaveni, ktera zijou MIMO /etc/config (U-Boot env:
+	# netmode, owrt_country, disable_mlo) a co z nich reálne platí. Ty hodnoty
+	# ridi chovani genconfigu i regulacni domain, v zadnem uci dumpu nejsou a
+	# jsou per-kus — 2026-07-25 nas kazda z nich stala hledani na spatnem miste.
+	\cp "$E/usr-sbin/mesh-env" files/usr/sbin/mesh-env; chmod +x files/usr/sbin/mesh-env
+
 	\cp "$E/www-cgi/mesh-status" files/www/cgi-bin/mesh-status; chmod +x files/www/cgi-bin/mesh-status
 	\cp "$E/mesh-node-names"     files/etc/mesh-node-names
 
@@ -86,7 +92,7 @@ easymesh_install_mld_scripts() {
 # universal i x8, takže se NEMŮŽOU rozejít (dnes ráno 991 chyběl v x8 kopii).
 easymesh_setup_iopsys_feed() {
 	# pin na týž commit jako original builder (L152), fallback HEAD
-	( cd "${EASYMESH_SHARED}/iopsys-feed" && git reset --hard 29de5ab68 && git clean -fd ) 2>/dev/null || \
+	( cd "${EASYMESH_SHARED}/iopsys-feed" && git reset --hard c72f24f88 && git clean -fd ) 2>/dev/null || \
 	( cd "${EASYMESH_SHARED}/iopsys-feed" && git reset --hard HEAD && git clean -fd ) 2>/dev/null || true
 	grep -q "src-link iopsys" feeds.conf.default || \
 		echo "src-link iopsys ${EASYMESH_SHARED}/iopsys-feed" >> feeds.conf.default

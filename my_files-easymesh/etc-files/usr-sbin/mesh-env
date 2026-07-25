@@ -1,0 +1,72 @@
+#!/bin/sh
+# Show the node settings that live OUTSIDE /etc/config.
+#
+# Some values that decide how a node behaves are kept in the U-Boot environment.
+# They appear in no uci dump, survive every sysupgrade including -n, and are per
+# unit - so two nodes built from the same image can behave differently and
+# nothing in the config explains why. On 2026-07-25 all three below cost real
+# debugging time for exactly that reason:
+#
+#   netmode       map_genconfig reads it (line 9). Without "extender" the agent
+#                 gets legacy per-radio fronthaul BSSes instead of MLD
+#                 affiliation, which shadows the ap-mld affiliated-link names
+#                 and hides fronthaul clients from the controller.
+#   owrt_country  /etc/board.d/05_fw_defaults would seed the regulatory domain
+#                 from it, via /var/run/uboot-env/. Unset on all our nodes, so
+#                 country ends up coming from luci-app-wifimgr's first-boot
+#                 service - and a node without that package silently keeps the
+#                 hardcoded 'US' fallback in /lib/wifi/mac80211.uc.
+#   disable_mlo   map_genconfig gates the per-radio fronthaul skip on it.
+#
+# Run it on the node you are asking about: the values are local, and no EasyMesh
+# TLV carries them, so the controller cannot report them for you.
+
+env_get() {
+	v=$(fw_printenv -n "$1" 2>/dev/null)
+	if [ -n "$v" ]; then printf '%s' "$v"; else printf -- '(unset)'; fi
+}
+
+printf 'node:            %s\n' "$(cat /proc/sys/kernel/hostname)"
+printf 'board:           %s\n' "$(cat /tmp/sysinfo/board_name 2>/dev/null)"
+echo
+echo 'U-Boot environment (drives behaviour, invisible in uci):'
+printf '  netmode        %s\n' "$(env_get netmode)"
+printf '  owrt_country   %s\n' "$(env_get owrt_country)"
+printf '  disable_mlo    %s\n' "$(env_get disable_mlo)"
+echo
+
+# The kernel exports the environment to /var/run/uboot-env/ through the
+# u-boot-env nvmem layout. When that fails, board.d cannot read any of it -
+# measured on bpi-x8: "Invalid calculated CRC32" and probe -22 for every
+# candidate partition, so /var/run/uboot-env/ stays empty and owrt_country can
+# never be picked up even if it were set.
+echo 'Kernel access to that environment:'
+if [ -d /var/run/uboot-env ] && [ -n "$(ls -A /var/run/uboot-env 2>/dev/null)" ]; then
+	printf '  /var/run/uboot-env   %s entries\n' "$(ls /var/run/uboot-env | wc -l)"
+else
+	printf '  /var/run/uboot-env   empty - board.d cannot seed anything from the env\n'
+	fails=$(dmesg 2>/dev/null | grep -c 'u-boot-env-layout.*failed')
+	[ "${fails:-0}" -gt 0 ] && {
+		printf '  nvmem layout failed %s time(s):\n' "$fails"
+		dmesg | grep 'u-boot-env-layout' | grep -iE 'crc|failed' | sed 's/^/    /' | head -4
+	}
+fi
+echo
+
+# What actually took effect, so the env above can be compared against reality.
+echo 'Resulting state:'
+printf '  wireless country   %s / %s / %s\n' \
+	"$(uci -q get wireless.radio0.country)" \
+	"$(uci -q get wireless.radio1.country)" \
+	"$(uci -q get wireless.radio2.country)"
+printf '  regulatory domain  %s\n' "$(iw reg get 2>/dev/null | awk '/^country/{print $2; exit}')"
+printf '  per-radio fronthaul BSSes (should be none on an MLO agent):\n'
+found=0
+for s in $(uci show wireless 2>/dev/null | sed -n 's/^wireless\.\([^.]*\)=wifi-iface$/\1/p'); do
+	[ "$(uci -q get "wireless.$s.multi_ap")" = "2" ] || continue
+	[ "$(uci -q get "wireless.$s.ssid")" = "$(uci -q get wireless.ap_mld_1.ssid)" ] || continue
+	[ "$(uci -q get "wireless.$s.ifname")" = "$(uci -q get wireless.ap_mld_1.ifname)" ] && continue
+	printf '    %s (%s)\n' "$s" "$(uci -q get "wireless.$s.ifname")"
+	found=1
+done
+[ "$found" = 0 ] && echo '    none'
