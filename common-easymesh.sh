@@ -90,6 +90,20 @@ easymesh_install_mld_scripts() {
 # --- 3) iopsys feed = JEDEN sdílený zdroj (proti 991-typu driftu) -----------
 # Voláno z openwrt/. Feed žije v EASYMESH_SHARED/iopsys-feed — jeden pro
 # universal i x8, takže se NEMŮŽOU rozejít (dnes ráno 991 chyběl v x8 kopii).
+# iopsys feed = map-agent, map-controller, libwifi, ieee1905 + vsechny nase
+# EasyMesh patche (936, 970-994, genconfig). Zije jako samostatny git repo v
+# ${EASYMESH_SHARED}/iopsys-feed a je v .gitignore, protoze ma vlastni historii.
+#
+# ZALOHA: do 2026-07-25 nebyly nase commity na ZADNEM remote - `origin` je
+# upstream dev.iopsys.eu, kam nepushujeme, takze jadro projektu existovalo jen
+# na disku VM1. Od 25. 7. je zrcadleno:
+#
+#   remote woziwrt = https://github.com/woziwrt/iopsys-feed.git  (private)
+#   branch devel, tag easymesh-pin-2026-07-25 -> c72f24f88
+#
+# Pri obnove na cistem stroji klonovat odtud, ne z upstreamu - upstream nase
+# patche nema. Po zmene ve feedu: commit + `git push woziwrt devel` + posunout
+# pin nize, jinak `git reset --hard` v teto funkci tu zmenu pri buildu zahodi.
 easymesh_setup_iopsys_feed() {
 	# pin na týž commit jako original builder (L152), fallback HEAD
 	( cd "${EASYMESH_SHARED}/iopsys-feed" && git reset --hard c72f24f88 && git clean -fd ) 2>/dev/null || \
