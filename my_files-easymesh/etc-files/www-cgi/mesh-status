@@ -101,6 +101,30 @@ fi
 # The headline: which device is connected to which node. Devices by DHCP name
 # where known; nodes by name. Backhaul links (node-to-node) are shown too but
 # labelled, so a real client is easy to tell from mesh plumbing.
+# Roles first. Two controllers invalidate everything else on this page: on
+# 2026-07-24 topology, depth, MLD counts and steering all looked broken at once
+# and each symptom was chased separately for days, when there was one cause.
+#
+# HEURISTIC, and said so below. A controller cannot reliably see a second
+# controller that never onboarded to it; what it can see is a node that is
+# present but never registered as an agent, which is how the rogue showed up.
+# Ground truth is per node - mesh-env reports whether a controller runs there.
+echo "<h2>Health &mdash; roles</h2>"
+_nodes=$(q "select count(*) from agent;")
+_notagent=$(q "select count(*) from agent where is_agent=0;")
+echo "<table><tr><th>check<th>result</tr>"
+echo "<tr><td>nodes in database<td>$(dash "$_nodes")</tr>"
+if [ "${_notagent:-0}" -gt 0 ]; then
+	echo "<tr><td>present but not registered as agent<td><b>$_notagent</b> &mdash; possible second controller</tr>"
+else
+	echo "<tr><td>present but not registered as agent<td>0</tr>"
+fi
+echo "</table>"
+echo "<p class=note>Heuristic. Controller and agent are not exclusive - a"
+echo "controller normally runs an agent too, so a node calling itself an agent"
+echo "may still be running a controller, and this page cannot see one that never"
+echo "onboarded here. Run <code>mesh-env</code> on each node for the real answer.</p>"
+
 echo "<h2>Clients &mdash; who is connected where</h2>"
 NSTA=$(q "SELECT count(*) FROM sta WHERE COALESCE(is_bsta,0)=0")
 if [ "$(q "SELECT count(*) FROM sta")" = "0" ]; then

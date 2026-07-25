@@ -53,6 +53,42 @@ else
 fi
 echo
 
+# Role on this node. Controller and agent are NOT exclusive: a controller
+# normally runs an agent as well (bpi-4g does), so "this node is an agent" says
+# nothing about whether it also runs a controller. That is exactly why the x8
+# split-brain on 2026-07-24 stayed invisible - the web UI asked whether the node
+# was an agent, got the correct answer, and a second controller sat behind it
+# while topology, depth, MLD counts and steering all looked broken at once.
+#
+# Do NOT use the ieee1905 "registrar" flag for this: measured 2026-07-25, it is
+# true on all three nodes including the pure agents, because it is about WSC and
+# not the Multi-AP role. The ground truth is whether a controller runs here.
+echo 'Role here (controller and agent are NOT exclusive):'
+ubus list 2>/dev/null | grep -qx 'map.controller' && ctl=yes || ctl=no
+# Read comm directly instead of pgrep: busybox `pgrep -x mapcontroller` does not
+# match it (measured on bpi-4g, where comm is exactly "mapcontroller"), and
+# `pgrep -f mapcontroller` matches this very script, because the pattern is in
+# its own command line. Comparing comm is exact and immune to both.
+ctlproc=no
+for _c in /proc/[0-9]*/comm; do
+	[ "$(cat "$_c" 2>/dev/null)" = "mapcontroller" ] && { ctlproc=yes; break; }
+done
+ubus list 2>/dev/null | grep -qx 'map.agent' && ag=yes || ag=no
+autostart=$(uci -q get mapagent.@controller_select[0].autostart)
+printf '  controller running       %s (ubus) / %s (process)\n' "$ctl" "$ctlproc"
+printf '  agent running            %s\n' "$ag"
+printf '  mapcontroller.enabled    %s\n' "$(uci -q get mapcontroller.controller.enabled)"
+printf '  controller_select.autostart %s\n' "${autostart:-(unset)}"
+# The foot-gun: with autostart=1 a node that fails to find a controller starts
+# one itself. On the intended controller that is wanted; on an agent it is how a
+# second controller appears, and the probe can fail for transient reasons alone
+# (backhaul not up yet, boot race). x8 had autostart=1 and did exactly this.
+if [ "$autostart" = "1" ] && [ "$ctl" = "no" ]; then
+	echo '  WARNING: autostart=1 and no controller here - if a probe ever fails,'
+	echo '           this node will promote itself and you get two controllers.'
+fi
+echo
+
 # What actually took effect, so the env above can be compared against reality.
 echo 'Resulting state:'
 printf '  wireless country   %s / %s / %s\n' \
