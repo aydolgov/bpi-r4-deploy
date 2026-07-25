@@ -115,6 +115,12 @@ uci commit firewall
 
 case "$ROLE" in
   controller)
+    # --- DHCP: controller adresy rozdava (jediny v siti) ---
+    # Explicitne, ne spolehnutim na default: agenti si to vypinaji ve sve vetvi a
+    # politika ma byt videt na obou stranach, ne jen na jedne.
+    uci -q delete dhcp.lan.ignore
+    uci commit dhcp
+
     # keep both mapcontroller + mapagent (collocated controller)
     /etc/init.d/mapcontroller enable
     /etc/init.d/mapagent enable
@@ -166,6 +172,19 @@ case "$ROLE" in
     echo "controller '$HOSTNAME' ($BOARD): mgmt $MGMT_IP ($MGMT_PORT) / mesh $MESH_IP (br-lan). Rebooting..."
     ;;
   agent)
+    # --- DHCP: agent NESMI rozdavat adresy ---
+    # Mesh je jedna L2 domena (br-lan premostena pres backhaul), takze druhy DHCP
+    # server na nem odpovi klientovi driv nez controller a vnuti mu SAM SEBE jako
+    # default gateway. Agent nikam nerouti -> klient ma adresu, asociaci i signal,
+    # ale ZADNY internet, a vypada to jako vada radia.
+    # HW pozorovano 2026-07-25: iPhone 11 dostal 10.10.10.111 od x8 a byl bez
+    # internetu, zbyle dva telefony na tomtez AP-MLD jely, protoze lease mely od 4g.
+    # Klasicky "vic DHCP na jedne siti" - resene uz driv, ale nikdy nezapecene,
+    # takze to reflash x8 smazal. Proto to patri sem, na jedno misto pro vsechny agenty.
+    uci set dhcp.lan.ignore='1'
+    uci commit dhcp
+    /etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
+
     # agent-only: disable the controller daemon, point agent at a remote controller.
     # controller_select is an ANONYMOUS uci section → path is @controller_select[0],
     # not .controller_select (the named form fails "Entry not found"). Bit us 2026-07-11.
