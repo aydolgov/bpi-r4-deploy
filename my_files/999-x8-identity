@@ -15,9 +15,12 @@
 #                     u klasiku - br-lan BEZ portu netifd nezvedne (overeno 2026-07-17).
 #   mesh = br-lan    (WiFi backhaul)
 #
-# NEobsahuje `fw_setenv netmode extender` z node-config.sh: na x8 je fw_env.config
-# pro NAND, boot je z eMMC -> fw_setenv zapisuje jinam a `|| true` chybu spolkne.
-# bSTA se definuje explicitne, coz je to, co realne funguje i na bpi-8g.
+# netmode=extender je NUTNY (nastaven nize): genconfig podle nej generuje MLD
+# fronthaul affiliaci. Bez nej vyrobi legacy per-radio fronthaul BSS, ktere stini
+# ap-mld affiliated-link jmena -> agent nevidi fronthaul klienty -> controller je
+# nevidi (blokuje steering). Puvodni domnenka ze fw_setenv na x8 nefunguje byla
+# MYLNA: overeno 2026-07-23 ze persistuje pres reboot a genconfig ho precte.
+# bSTA se stejne definuje explicitne nize.
 
 HOSTNAME="bpi-x8"
 # ieee1905 AL-MAC natvrdo. 30-set-ieee1905-al-macaddr ho NEnastavi (get_mac_label je
@@ -74,6 +77,10 @@ uci -q set mapcontroller.controller.enabled='0'
 uci -q commit mapcontroller
 uci -q set mapagent.@controller_select[0].local='0'
 uci -q set mapagent.@controller_select[0].mode='auto'
+uci -q set mapagent.@controller_select[0].autostart='0'
+
+# --- netmode=extender: nutny pro MLD fronthaul affiliaci v genconfig ---
+fw_setenv netmode extender 2>/dev/null
 
 # --- bSTA 5 GHz (explicitne, shodne s bpi-8g) ---
 uci -q add mapagent bsta

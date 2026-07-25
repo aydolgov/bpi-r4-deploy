@@ -1,0 +1,138 @@
+#!/bin/bash
+set -euo pipefail
+# ============================================================================
+# builder-x8.sh  —  BPI-R4 Pro-8X EasyMesh R6 image.
+#
+# = SDÍLENÁ easymesh WiFi/mesh vrstva (common-easymesh.sh) + TENKÁ Pro-8X delta.
+# WiFi/mesh se řeší VÝHRADNĚ v common-easymesh.sh (jeden zdroj pravdy, shodný
+# s universalem) — tento builder řeší JEN Pro-8X hardware + identitu uzlu.
+#
+# Hranice (lekce 2026-07-24): tady NIC WiFi/mesh (patche, feed, easymesh
+# config, wireless, bSTA). Jen device defconfig, board patche, identita, role.
+# ============================================================================
+
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+EASYMESH_SHARED="${EASYMESH_SHARED:-${REPO_DIR}/../easymesh-shared}"   # jeden pro všechny buildery
+AUTOBUILD_TARGET="filogic-mac80211-mt798x_rfb-wifi7_nic"              # STEJNÝ jako universal
+OPENWRT_COMMIT="${OPENWRT_COMMIT:-13ff2256e5dd9bc070f9a9c6a673bff4a9191837}"
+MTK_COMMIT="${MTK_COMMIT:-ec6b3fcef259708da3d7d2c189fa108c9bc67ac7}"
+
+# shellcheck source=common-easymesh.sh
+. "${EASYMESH_SHARED}/common-easymesh.sh"
+
+rm -rf openwrt mtk-openwrt-feeds
+git clone --branch openwrt-25.12 https://github.com/openwrt/openwrt.git openwrt
+( cd openwrt && git checkout "${OPENWRT_COMMIT}" )
+git clone --branch main https://github.com/mediatek/mtk-openwrt-feeds mtk-openwrt-feeds
+( cd mtk-openwrt-feeds && git checkout "${MTK_COMMIT}" )
+
+# --- eth/SFP patche (BPI-R4 networking HW; TODO: kandidát na common-board) ---
+for p in 999-sfp-10-additional-quirks 999-sfp-11-rtl8261be-mdio-none \
+	 999-sfp-22-rtl8261be-boot-1g-reprobe 999-eth-21-mtk-gdm-rx-fsm-reset \
+	 999-fix-00-xfrm-sw-sa-offload-ok; do
+	\cp -r "my_files/$p.patch" mtk-openwrt-feeds/25.12/files/target/linux/mediatek/patches-6.12
+done
+
+# --- SDÍLENÉ: WiFi patche (BTWT + LED) do MTK feedu ---
+easymesh_apply_wifi_patches
+
+cd openwrt
+bash ../mtk-openwrt-feeds/autobuild/unified/autobuild.sh "${AUTOBUILD_TARGET}" prepare
+
+# ==========================================================================
+# ---------- Pro-8X HARDWARE DELTA (jediné, čím se x8 liší od 8g) -----------
+# ==========================================================================
+
+# platform.sh: registrovat bpi-r4-pro-8x (fail-closed count check)
+python3 - <<'PLATFORM_EOF'
+f = "target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh"
+c = open(f).read()
+p1 = "\tbananapi,bpi-r4-lite|\\\n\tbazis,ax3000wm"
+p2 = "\tbananapi,bpi-r4-lite|\\\n\tcmcc,rax3000m"
+assert c.count(p1) == 2 and c.count(p2) == 1, "platform.sh: UPSTREAM SE ZMENIL"
+c = c.replace(p1, "\tbananapi,bpi-r4-lite|\\\n\tbananapi,bpi-r4-pro-8x|\\\n\tbazis,ax3000wm")
+c = c.replace(p2, "\tbananapi,bpi-r4-lite|\\\n\tbananapi,bpi-r4-pro-8x|\\\n\tcmcc,rax3000m")
+open(f, "w").write(c)
+assert c.count("bananapi,bpi-r4-pro-8x") == 3
+print("platform.sh: bpi-r4-pro-8x registrovan 3x - OK")
+PLATFORM_EOF
+
+# NVMe/uboot (sdílené s klasikem, ale board-level)
+\cp -r ../my_files/453-w-add-bpi-r4-nvme-dtso.patch target/linux/mediatek/patches-6.12/
+\cp -r ../my_files/455-w-add-bpi-r4-pro-nvme-dtso.patch target/linux/mediatek/patches-6.12/
+\cp -r ../my_files/450-w-nand-mmc-add-bpi-r4.patch package/boot/uboot-mediatek/patches/450-add-bpi-r4.patch
+\cp -r ../my_files/451-w-add-bpi-r4-nvme.patch package/boot/uboot-mediatek/patches/451-add-bpi-r4-nvme.patch
+\cp ../my_files/452-w-add-bpi-r4-nvme-rfb.patch package/boot/uboot-mediatek/patches/452-add-bpi-r4-nvme-rfb.patch
+\cp ../my_files/454-w-add-bpi-r4-nvme-env.patch package/boot/uboot-mediatek/patches/454-add-bpi-r4-nvme-env.patch
+
+# Pro-8X specifické: odstranit superseded MTK feed patche, nasadit naše
+rm -f target/linux/mediatek/patches-6.12/999-eth-06-mtk_eth_soc-support-ethernet-passive-mux.patch
+rm -f target/linux/mediatek/patches-6.12/046-v6.19-arm64-dts-mediatek-mt7988a-bpi-r4-pro-add-dts.patch
+\cp -r ../my_files/bpi-r4-pro/patches-kernel/* target/linux/mediatek/patches-6.12/
+\cp ../my_files/bpi-r4-pro/patches-uboot/471-add-bpi-r4-pro-8x.patch package/boot/uboot-mediatek/patches/
+\cp ../my_files/bpi-r4-pro/uboot-mediatek-Makefile package/boot/uboot-mediatek/Makefile
+\cp ../my_files/bpi-r4-pro/arm-trusted-firmware-mediatek-Makefile package/boot/arm-trusted-firmware-mediatek/Makefile
+\cp -r ../my_files/w-sd-nand-mmc-nvme-ddr4-filogic.mk target/linux/mediatek/image/filogic.mk
+mv target/linux/mediatek/image/filogic-extra.mk target/linux/mediatek/image/filogic-extra.mk.disabled
+\cp -r ../my_files/999-fitblk-02-w-add-bpi-r4-nvme-fitblk.patch target/linux/mediatek/patches-6.12
+
+# kernel config + Pro-8X ethernet PHY (aeon_as21xxx)
+echo "CONFIG_BLK_DEV_NVME=y" >> target/linux/mediatek/filogic/config-6.12
+echo "CONFIG_TASK_IO_ACCOUNTING=y" >> target/linux/mediatek/filogic/config-6.12
+python3 -c 'c=open("package/kernel/linux/modules/netdevices.mk").read(); open("package/kernel/linux/modules/netdevices.mk","w").write(c.replace("as21xxx.ko","aeon_as21xxx.ko").replace("AutoLoad,18,as21xxx)","AutoLoad,18,aeon_as21xxx)"))'
+python3 -c 'c=open("target/linux/mediatek/filogic/config-6.12").read(); open("target/linux/mediatek/filogic/config-6.12","w").write(c.replace("CONFIG_AS21XXX_PHY=y","CONFIG_AS21XXX_PHY=m"))'
+
+# --- image files/: hostname + SDÍLENÉ mld skripty + Pro-8X síť/identita ----
+mkdir -p files/etc/uci-defaults
+\cp -r ../my_files/99-set-hostname files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/99-set-hostname
+
+easymesh_install_mld_scripts        # SDÍLENÉ: mld-*-check, mesh-status, mapc-db-keep
+
+\cp -r ../my_files/99-pro-8x-network files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/99-pro-8x-network
+# compat_version fix: pro-8x chybí v board.d/05_compat-version → device by trčel
+# na 1.0 vs image 1.1 → keep-config navždy odmítnut. Zapíšeme 1.1 jako klasici.
+\cp -r ../my_files/06-x8-compat-version files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/06-x8-compat-version
+# identita se NEpeče (žádný 999-x8-identity). Nasazuje se per-uzel přes
+# node-config.sh po flashi — stejně jako klasici → jeden image → N x8 bez kolize.
+# node-config.sh je board-aware (Pro-8X mgmt=mxl_lan0, AL-MAC z HW). x8 tím padá
+# na keep-config workflow klasiků (po jednorázovém -F crossoveru 1.0→1.1).
+mkdir -p files/root
+\cp ../my_files/node-config.sh files/root/node-config.sh; chmod +x files/root/node-config.sh
+
+# SD auto-expand + Pro-8X flash env + install skripty
+mkdir -p files/lib/preinit files/etc files/root/install-dir files/usr/sbin
+\cp ../my_files/etc-files/lib/preinit/19-expand-fit-rootfs files/lib/preinit/; chmod +x files/lib/preinit/19-expand-fit-rootfs
+\cp ../my_files/fw_env_pro8x_snand.config files/etc/fw_env.config
+for i in nand nvme emmc; do
+	\cp "../my_files/bpi-r4-install/install-$i-pro8x.sh" "files/root/install-dir/install-$i.sh"
+	chmod +x "files/root/install-dir/install-$i.sh"
+done
+\cp ../my_files/bpi-r4-install/boot-nvme files/usr/sbin/boot-nvme; chmod +x files/usr/sbin/boot-nvme
+\cp ../my_files/bpi-r4-pro/files/usr/sbin/boot-nand files/usr/sbin/boot-nand; chmod +x files/usr/sbin/boot-nand
+
+# ==========================================================================
+# ---------- SDÍLENÁ easymesh vrstva (feed + defconfig) ---------------------
+# ==========================================================================
+easymesh_install_wifimgr           # SDILENE: luci-app-wifimgr (nese country=CZ)
+./scripts/feeds update -a
+./scripts/feeds install -a
+
+easymesh_setup_iopsys_feed          # SDÍLENÝ iopsys feed (jeden zdroj, bez driftu)
+\cp ../my_files/fit.sh package/utils/fitblk/files/fit.sh
+
+\cp -r ../configs/my_defconfig-8x-full .config   # Pro-8X device volby (board delta)
+easymesh_apply_defconfig            # SDÍLENÉ easymesh symboly + TR181/bbfdm off
+
+# Pro-8X ATF varianty (4bg)
+echo "CONFIG_PACKAGE_trusted-firmware-a-mt7988-emmc-comb-4bg=y" >> .config
+echo "CONFIG_PACKAGE_trusted-firmware-a-mt7988-sdmmc-comb-4bg=y" >> .config
+echo "CONFIG_PACKAGE_trusted-firmware-a-mt7988-spim-nand-ubi-comb-4bg=y" >> .config
+
+# PREPARE_ONLY=1 → doběhne k nastageovanému .config+patches+files/ (verify),
+# přeskočí dlouhý full build. Prázdné/0 = normální build.
+if [ "${PREPARE_ONLY:-0}" = 1 ]; then
+	# ŽÁDNÝ make defconfig tady — viz builder-universal-new.sh (force ATF řádky).
+	echo ">>> PREPARE_ONLY: .config + patche + files/ nastageovany, full build PRESKOCEN"
+else
+	bash ../mtk-openwrt-feeds/autobuild/unified/autobuild.sh "${AUTOBUILD_TARGET}" build
+fi

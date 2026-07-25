@@ -1,0 +1,16 @@
+#!/bin/sh /etc/rc.common
+
+# Give the radios time to settle before deciding a link is missing rather
+# than merely late. See /usr/sbin/mld-link-check for what this recovers.
+
+START=98
+
+SETTLE=45
+
+start() {
+	( sleep "$SETTLE"; /usr/sbin/mld-link-check ) >/dev/null 2>&1 &
+}
+
+stop() {
+	return 0
+}
