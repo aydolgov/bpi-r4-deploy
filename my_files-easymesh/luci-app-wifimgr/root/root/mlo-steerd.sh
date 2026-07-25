@@ -130,6 +130,9 @@ attlm_set() {
 }
 
 # Return space-separated list of MLMR client MACs (max_simul_links > 1)
+# MLMR = can actually use more than one link at a time. This is the gate for
+# Neg-TTLM: mapping different TIDs to different links only means something for a
+# station with more than one radio.
 get_mlmr_macs() {
     hostapd_cli -i "$MLO_IF" all_sta 2>/dev/null | awk '
         /^[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:/ { mac=$1 }
@@ -139,52 +142,92 @@ get_mlmr_macs() {
     '
 }
 
+# MLD-capable at all: hostapd only reports max_simul_links for a station that
+# negotiated multi-link. A legacy (non-MLO) client on an AP-MLD still shows one
+# Link block in the station dump, so link blocks cannot tell the two apart - and a
+# Wi-Fi 5 iPhone 6s read as "MLSR" until this existed.
+get_mld_macs() {
+    hostapd_cli -i "$MLO_IF" all_sta 2>/dev/null | awk '
+        /^[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:/ { mac=$1 }
+        /max_simul_links=/ { print mac }
+    '
+}
+
+# eMLSR = one radio, but fast link switching negotiated with the AP. Measured
+# 2026-07-25: an iPhone 16 reports max_simul_links=1 AND emlsr_support=0, i.e.
+# plain MLSR. Labelling every MLO client EMLSR hid the one capability that decides
+# whether Neg-TTLM applies at all.
+get_emlsr_macs() {
+    hostapd_cli -i "$MLO_IF" all_sta 2>/dev/null | awk '
+        /^[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:/ { mac=$1 }
+        /emlsr_support=/ {
+            split($1,a,"="); if (a[2]+0 == 1) print mac
+        }
+    '
+}
+
 # Print one log line per connected client
 log_clients() {
     local mask="$1"
-    local snr0="$2" snr1="$3" snr2="$4"
-    local ttlm_macs="$5"
+    local ttlm_macs="$2" mlmr_macs="$3" emlsr_macs="$4" mld_macs="$5"
     local dis0=$(( mask & 1 ))
     local dis1=$(( (mask >> 1) & 1 ))
     local dis2=$(( (mask >> 2) & 1 ))
 
+    # Per-client line carries that client's OWN per-link signal, parsed from its
+    # own Link blocks. It used to carry min_rssi()'s per-link minima across ALL
+    # stations, which made two clients 23 dB apart print identical numbers.
+    #
+    # The Link blocks are the only authority on which links a station holds:
+    # hostapd_cli list_sta reports every MLD station on every affiliated link
+    # instance, so it cannot be used to count or attribute links.
     iw dev "$MLO_IF" station dump 2>/dev/null | awk \
         -v dis0="$dis0" -v dis1="$dis1" -v dis2="$dis2" \
-        -v snr0="$snr0" -v snr1="$snr1" -v snr2="$snr2" \
-        -v mlmr_macs="$6" -v ttlm_macs="$ttlm_macs" \
+        -v mlmr_macs="$mlmr_macs" -v emlsr_macs="$emlsr_macs" -v ttlm_macs="$ttlm_macs" \
+        -v mld_macs="$mld_macs" \
         -v prefix="$(date '+%H:%M:%S') [steerd]" '
     BEGIN {
-        n=split(ttlm_macs,t," "); for(i=1;i<=n;i++) has_ttlm[t[i]]=1
-        n=split(mlmr_macs,m," "); for(i=1;i<=n;i++) is_mlmr[m[i]]=1
+        n=split(ttlm_macs,t," ");  for(i=1;i<=n;i++) has_ttlm[t[i]]=1
+        n=split(mlmr_macs,m," ");  for(i=1;i<=n;i++) is_mlmr[m[i]]=1
+        n=split(emlsr_macs,e," "); for(i=1;i<=n;i++) is_emlsr[e[i]]=1
+        n=split(mld_macs,d," ");   for(i=1;i<=n;i++) is_mld[d[i]]=1
         band[0]="2G"; band[1]="5G"; band[2]="6G"
-        snr[0]=snr0; snr[1]=snr1; snr[2]=snr2
         dis[0]=dis0;  dis[1]=dis1;  dis[2]=dis2
     }
     /^Station / {
         if (mac != "") print_client()
-        mac=$2; cur_link=-1
+        mac=$2; cur_link=-1; active_link=-1; split("", psig)
     }
-    /Link [0-9]+:/ { tmp=$0; sub(/.*Link /,"",tmp); sub(/:.*/, "",tmp); cur_link=tmp+0 }
+    /^\tLink [0-9]+:/ { tmp=$0; sub(/.*Link /,"",tmp); sub(/:.*/, "",tmp); cur_link=tmp+0 }
     cur_link>=0 && /signal:/ && /\[/ {
         sig=$0; sub(/.*signal:[[:space:]]*/,"",sig); sub(/[[:space:]].*/, "",sig)
+        psig[cur_link]=sig+0
         if (sig+0 != 0) active_link=cur_link
     }
     END { if (mac != "") print_client() }
-    function print_client(    type,l,info,ttlm,short) {
-        type = (mac in is_mlmr) ? "MLMR" : "EMLSR"
+    function print_client(    type,l,info,ttlm,short,s) {
+        # MLSR is the honest default for an MLD station that reports neither
+        # capability. A station with no MLD capabilities at all is not MLO.
+        if (!(mac in is_mld))        type = "LEGACY"
+        else if (mac in is_mlmr)     type = "MLMR"
+        else if (mac in is_emlsr)    type = "EMLSR"
+        else                         type = "MLSR"
         short = substr(mac,1,8)
         info = ""
         for (l=0; l<=2; l++) {
-            if (snr[l] == "n/a") {
-                info = info " " band[l] ":idle"
+            if (!(l in psig)) {
+                info = info " " band[l] ":-"          # not affiliated on this link
+            } else if (psig[l] == 0) {
+                info = info " " band[l] ":idle"       # link up, driver reports 0 dBm
             } else if (dis[l]) {
-                info = info " " band[l] ":dis(snr=" snr[l] ")"
+                info = info " " band[l] ":dis(" psig[l] ")"
             } else {
-                info = info " " band[l] ":snr=" snr[l]
+                info = info " " band[l] ":" psig[l]
             }
         }
         ttlm = (mac in has_ttlm) ? "  TTLM:active" : ""
-        printf "%s  %-9s %-5s %s%s\n", prefix, short, type, info, ttlm
+        printf "%s  %-9s %-6s %s  active=%s%s\n", prefix, short, type, info,
+               (active_link >= 0 ? active_link : "none"), ttlm
     }
 '
 }
@@ -376,7 +419,7 @@ while true; do
         for _mac in $NEG_TTLM_MACS; do neg_ttlm_teardown "$_mac"; done
         NEG_TTLM_MACS=""
         attlm_set "$MASK"
-        STATUS="ATTLM mask=$MASK | ret=${RET}% busy6G=${BUSY2}% busy5G=${BUSY1}%"
+        STATUS="ATTLM mask=$MASK | ret=${RET}% busy6G=${BUSY2}% busy5G=${BUSY1}% | snr(min over stanic) 2G=${SNR0_S} 5G=${SNR1_S} 6G=${SNR2_S}"
     else
         ACTIVE_MASK=7
         NEW_NEG_MACS=""
@@ -384,7 +427,7 @@ while true; do
             neg_ttlm_set "$_mac" "$ACTIVE_MASK" && NEW_NEG_MACS="${NEW_NEG_MACS} ${_mac}"
         done
         NEG_TTLM_MACS="$NEW_NEG_MACS"
-        STATUS="all links up | ret=${RET}% busy6G=${BUSY2}% busy5G=${BUSY1}%"
+        STATUS="all links up | ret=${RET}% busy6G=${BUSY2}% busy5G=${BUSY1}% | snr(min over stanic) 2G=${SNR0_S} 5G=${SNR1_S} 6G=${SNR2_S}"
     fi
 
     # --- R-TWT group maintenance (every RTWT_CHECK_INTERVAL iterations) ---
@@ -395,7 +438,9 @@ while true; do
     RTWT_ST=$(btwt_status)
 
     # --- Per-client log ---
-    log_clients "$MASK" "$SNR0_S" "$SNR1_S" "$SNR2_S" "$NEG_TTLM_MACS" "$MLMR_MACS"
+    EMLSR_MACS=$(get_emlsr_macs)
+    MLD_MACS=$(get_mld_macs)
+    log_clients "$MASK" "$NEG_TTLM_MACS" "$MLMR_MACS" "$EMLSR_MACS" "$MLD_MACS"
     log "$STATUS | R-TWT:$RTWT_ST"
 
     sleep "$INTERVAL"
