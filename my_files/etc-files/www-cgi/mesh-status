@@ -1,0 +1,222 @@
+#!/bin/sh
+# mesh-status - a plain page showing what the controller actually knows.
+#
+# Deliberately not the WebUI from docs/design/webui-shape-2026-07-21.md. That
+# one is for the owner of a mesh and has to be designed. This is for us: no
+# framework, no build step, no LuCI integration - a CGI script that asks the
+# database and prints the answer.
+#
+# Human layer (2026-07-23): nodes and clients are shown by NAME, not MAC.
+# Node names come from /etc/mesh-node-names ("<al-mac> <name>" per line) so
+# other identification can be added later without touching this script; a MAC
+# with no entry falls back to the raw MAC. Clients use their DHCP hostname.
+# The MAC-level inventory below is unchanged - that is for us, the names for you.
+#
+# Install: /www/cgi-bin/mesh-status on the controller.
+#          http://<controller>/cgi-bin/mesh-status
+
+DB=/etc/mapc/mapc.db
+NAMES=/etc/mesh-node-names
+
+q() { sqlite3 "$DB" "$1" 2>/dev/null; }
+dash() { [ -n "$1" ] && printf '%s' "$1" || printf '<span class=na>&mdash;</span>'; }
+
+# AL-MAC -> friendly node name. Extend by editing /etc/mesh-node-names.
+node_name() {
+	[ -n "$1" ] || { printf '<span class=na>&mdash;</span>'; return; }
+	n=$(awk -v m="$1" 'BEGIN{IGNORECASE=1} $1==m {print $2; exit}' "$NAMES" 2>/dev/null)
+	if [ -n "$n" ]; then printf '%s <span class="sub mac">%s</span>' "$n" "$1"
+	else printf '<span class=mac>%s</span>' "$1"; fi
+}
+
+band_name() {
+	case "$1" in
+		1) echo "2.4 GHz" ;;  2) echo "5 GHz" ;;  8) echo "6 GHz" ;;
+		"") echo "<span class=na>&mdash;</span>" ;;
+		*) echo "band $1" ;;
+	esac
+}
+
+yn() {
+	case "$1" in
+		1) echo '<span class=ok>yes</span>' ;;
+		0) echo 'no' ;;
+		*) echo '<span class=na>&mdash;</span>' ;;
+	esac
+}
+
+REFRESH=""
+case "$QUERY_STRING" in
+	*refresh=*) REFRESH=$(echo "$QUERY_STRING" | sed -n 's/.*refresh=\([0-9]\{1,4\}\).*/\1/p') ;;
+esac
+
+printf 'Content-Type: text/html; charset=utf-8\r\n\r\n'
+
+echo '<!DOCTYPE html><html><head><meta charset="utf-8">'
+[ -n "$REFRESH" ] && echo "<meta http-equiv=\"refresh\" content=\"$REFRESH\">"
+cat <<'EOF'
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EasyMesh</title>
+<style>
+ body{font:14px/1.55 -apple-system,system-ui,sans-serif;margin:2rem auto;max-width:62rem;
+      padding:0 1rem;color:#111;background:#fff}
+ h1{font-size:1.35rem;margin:0 0 .2rem}
+ h2{font-size:1rem;margin:2.2rem 0 .5rem;font-weight:600}
+ .sub{color:#777;font-size:.88rem}
+ .note{color:#777;font-size:.85rem;margin:.4rem 0 0}
+ table{border-collapse:collapse;width:100%;margin:.6rem 0}
+ th,td{text-align:left;padding:.35rem .55rem;border-bottom:1px solid #ececec;
+       vertical-align:top}
+ th{color:#666;font-weight:600;font-size:.82rem;white-space:nowrap}
+ .mac,.num{font-family:ui-monospace,Menlo,monospace;font-size:.82rem}
+ .sub.mac{font-size:.72rem}
+ .ok{color:#0a7d28}.warn{color:#b26a00}.bad{color:#c0392b}.na{color:#bbb}
+ .grp{font-weight:600;padding-top:.9rem}
+ .big td{font-size:1rem;padding:.5rem .55rem}
+ .dev{font-weight:600}
+ .bar{display:inline-block;height:.55rem;border-radius:2px;vertical-align:middle}
+ .bf{background:#0a7d28}.be{background:#ddd}
+ @media (prefers-color-scheme:dark){
+   body{background:#111;color:#eee} th{color:#999} .sub,.note{color:#888}
+   th,td{border-bottom-color:#282828} .na{color:#555} .be{background:#333}
+ }
+</style></head><body>
+EOF
+
+echo "<h1>EasyMesh</h1>"
+printf '<div class=sub>controller %s &middot; %s &middot; ' "$(cat /proc/sys/kernel/hostname)" "$(date)"
+if [ -n "$REFRESH" ]; then
+	printf 'auto-refresh %s s &middot; <a href="?">stop</a></div>\n' "$REFRESH"
+	cat <<'EOF'
+<script>
+ addEventListener('beforeunload',function(){sessionStorage.setItem('y',scrollY)});
+ addEventListener('load',function(){var y=sessionStorage.getItem('y');if(y)scrollTo(0,+y)});
+</script>
+EOF
+else
+	printf '<a href="?refresh=15">auto-refresh</a></div>\n'
+fi
+
+# ----------------------------------------------------------------- clients
+# The headline: which device is connected to which node. Devices by DHCP name
+# where known; nodes by name. Backhaul links (node-to-node) are shown too but
+# labelled, so a real client is easy to tell from mesh plumbing.
+echo "<h2>Clients &mdash; who is connected where</h2>"
+NSTA=$(q "SELECT count(*) FROM sta WHERE COALESCE(is_bsta,0)=0")
+if [ "$(q "SELECT count(*) FROM sta")" = "0" ]; then
+	echo "<p class=note>No clients or backhaul links recorded yet.</p>"
+else
+	echo "<table class=big><tr><th>device<th>connected to<th>band<th>state</tr>"
+	q "SELECT COALESCE(NULLIF(s.hostname,''), s.macaddr), s.agent_almac, s.associated,
+	          COALESCE(s.is_bsta,0),
+	          (SELECT r.band FROM bss b JOIN radio r ON r.ruid=b.ruid WHERE b.bssid=s.bssid LIMIT 1)
+	   FROM sta s ORDER BY COALESCE(s.is_bsta,0), s.hostname, s.macaddr" |
+	while IFS='|' read -r name agent assoc isbsta band; do
+		dev="$name"
+		[ "$isbsta" = "1" ] && dev="<span class=sub>$name &middot; backhaul link</span>" \
+		                    || dev="<span class=dev>$name</span>"
+		printf '<tr><td>%s<td>%s<td>%s<td>%s</tr>\n' \
+			"$dev" "$(node_name "$agent")" "$(band_name "$band")" \
+			"$([ "$assoc" = "1" ] && echo '<span class=ok>connected</span>' || echo 'left')"
+	done
+	echo "</table>"
+	printf '<p class=note>%s client device(s) and the backhaul links between nodes. Device names come from DHCP; unknown ones show their MAC. Node names live in /etc/mesh-node-names.</p>\n' "$NSTA"
+fi
+
+# ------------------------------------------------------------------- nodes
+echo "<h2>Nodes</h2><table><tr><th>node<th>role<th>depth<th>radios<th>BSS<th>backhaul<th>upstream</tr>"
+HAVE_VIEW=$(q "SELECT count(*) FROM sqlite_master WHERE type='view' AND name='agent_backhaul'")
+if [ "$HAVE_VIEW" = "1" ]; then
+	SEL="SELECT a.almac, CASE WHEN ab.depth=0 THEN 'controller' ELSE 'agent' END, ab.depth,
+	     (SELECT count(*) FROM radio r WHERE r.agent_almac=a.almac),
+	     (SELECT count(*) FROM bss b JOIN radio r ON r.ruid=b.ruid WHERE r.agent_almac=a.almac),
+	     ab.backhaul_band, ab.backhaul_upstream_al
+	     FROM agent a LEFT JOIN agent_backhaul ab ON ab.almac=a.almac
+	     ORDER BY ab.depth, a.almac"
+else
+	SEL="SELECT a.almac, CASE WHEN a.depth=0 THEN 'controller' ELSE 'agent' END, a.depth,
+	     (SELECT count(*) FROM radio r WHERE r.agent_almac=a.almac),
+	     (SELECT count(*) FROM bss b JOIN radio r ON r.ruid=b.ruid WHERE r.agent_almac=a.almac),
+	     NULL, (SELECT t.parent_almac FROM topology_link t WHERE t.child_almac=a.almac)
+	     FROM agent a ORDER BY a.depth, a.almac"
+fi
+q "$SEL" | while IFS='|' read -r almac role depth radios bsses band up; do
+	printf '<tr><td>%s<td>%s<td class=num>%s<td class=num>%s<td class=num>%s<td>%s<td>%s</tr>\n' \
+		"$(node_name "$almac")" "$role" "$(dash "$depth")" "$(dash "$radios")" "$(dash "$bsses")" \
+		"$(band_name "$band")" "$([ -n "$up" ] && node_name "$up" || dash "")"
+done
+echo "</table>"
+[ "$HAVE_VIEW" = "1" ] || echo "<p class=note>The agent_backhaul view is not in this database yet (patch 973), so the backhaul band is unavailable.</p>"
+
+# ------------------------------------------------------------------ radios
+echo "<h2>Radios and Wi-Fi 7 capabilities</h2>"
+echo "<table><tr><th>node<th>band<th>EMLSR<th>STR<th>NSTR<th>EMLMR<th>EHT caps</tr>"
+q "SELECT r.agent_almac, r.band, c.wifi7_emlsr, c.wifi7_str,
+          c.wifi7_nstr, c.wifi7_emlmr, c.eht_caps
+   FROM radio r LEFT JOIN radio_caps c ON c.ruid=r.ruid
+   ORDER BY r.agent_almac, r.band" |
+while IFS='|' read -r agent band emlsr str nstr emlmr eht; do
+	printf '<tr><td>%s<td>%s<td>%s<td>%s<td>%s<td>%s<td>%s</tr>\n' \
+		"$(node_name "$agent")" "$(band_name "$band")" \
+		"$(yn "$emlsr")" "$(yn "$str")" "$(yn "$nstr")" "$(yn "$emlmr")" "$(dash "$eht")"
+done
+echo "</table>"
+
+# --------------------------------------------------------------------- MLD
+echo "<h2>AP-MLD (Wi-Fi 7 fronthaul)</h2><table><tr><th>node<th>SSID<th>enabled<th>affiliated links<th>TTLM rows</tr>"
+q "SELECT m.agent_almac, m.ssid, m.enabled,
+          (SELECT count(*) FROM affiliated_ap f WHERE f.mld_macaddr=m.mld_macaddr),
+          (SELECT count(*) FROM ttlm t WHERE t.mld_macaddr=m.mld_macaddr)
+   FROM apmld m ORDER BY m.agent_almac" |
+while IFS='|' read -r agent ssid en aps ttlm; do
+	printf '<tr><td>%s<td>%s<td>%s<td class=num>%s<td class=num>%s</tr>\n' \
+		"$(node_name "$agent")" "$(dash "$ssid")" "$(yn "$en")" "$(dash "$aps")" "$(dash "$ttlm")"
+done
+echo "</table>"
+
+# ---------------------------------------------------------------- coverage
+echo "<h2>Raw tables (for us)</h2>"
+echo "<p class=note>The MAC-level inventory: one line per table, how many of its"
+echo "columns ever hold a value. This is the debug view - the sections above are"
+echo "the human one.</p>"
+echo "<table><tr><th>table<th>rows<th>columns with data<th></th><th>empty</tr>"
+
+for t in $(q "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"); do
+	rows=$(q "SELECT count(*) FROM \"$t\"")
+	cols=$(q "PRAGMA table_info(\"$t\")" | cut -d'|' -f2)
+	ncols=$(echo "$cols" | wc -w)
+
+	if [ "${rows:-0}" -eq 0 ] 2>/dev/null; then
+		printf '<tr><td>%s<td class="num warn">0<td colspan=3 class=sub>table is empty</tr>\n' "$t"
+		continue
+	fi
+
+	nfull=0; empties=""; detail=""
+	for c in $cols; do
+		filled=$(q "SELECT count(*) FROM \"$t\" WHERE \"$c\" IS NOT NULL AND \"$c\" != ''")
+		ex=$(q "SELECT \"$c\" FROM \"$t\" WHERE \"$c\" IS NOT NULL AND \"$c\" != '' LIMIT 1" | cut -c1-24)
+		if [ "$filled" -eq 0 ]; then
+			empties="${empties}${empties:+, }$c"
+			detail="${detail}<tr><td>&nbsp;&nbsp;<span class=warn>$c</span><td class=\"num warn\">0/$rows<td colspan=2 class=sub>never written</tr>"
+		else
+			nfull=$(( nfull + 1 ))
+			detail="${detail}<tr><td>&nbsp;&nbsp;$c<td class=\"num ok\">$filled/$rows<td colspan=2 class=num>$(dash "$ex")</tr>"
+		fi
+	done
+
+	w=$(( nfull * 60 / ncols ))
+	[ "$nfull" -eq "$ncols" ] && cls=ok || cls=warn
+	printf '<tr><td>%s<td class=num>%s<td class="num %s">%s/%s' "$t" "$rows" "$cls" "$nfull" "$ncols"
+	printf '<td><span class="bar bf" style="width:%spx"></span><span class="bar be" style="width:%spx"></span>' \
+		"$w" "$(( 60 - w ))"
+	if [ -n "$empties" ]; then
+		printf '<td class=sub>%s</tr>\n' "$empties"
+	else
+		printf '<td class=ok>&mdash;</tr>\n'
+	fi
+	printf '<tr><td colspan=5><details><summary class=sub>all %s columns</summary><table>%s</table></details></tr>\n' \
+		"$ncols" "$detail"
+done
+echo "</table>"
+
+echo "</body></html>"

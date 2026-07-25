@@ -1,0 +1,41 @@
+#!/bin/sh
+# Make sure the MLD provisioning actually happened, before mapagent starts.
+#
+# map_genconfig is a hotplug handler: it runs on ieee80211 add events and
+# nothing runs it again afterwards. On a node whose configuration was wiped -
+# sysupgrade -n, or simply a new node out of the box - those events can land
+# before it is able to complete the MLD provisioning, and then the moment is
+# gone for the rest of that boot.
+#
+# The symptom is asymmetric and easy to misread. wireless.mld0 and ap_mld_1 are
+# present, because for our boards they are baked into the image, so the AP-MLD
+# comes up and looks healthy - hostapd reports every link enabled. But
+# mapagent.apmld0 is absent and no fronthaul AP carries mld_id, so the agent
+# advertises an AP-MLD with no affiliated links and the controller stores a row
+# of zeroes. Measured on bpi-x8 after a -n flash, 2026-07-21: apmld=2 in the
+# database but affiliated_ap=3, all three belonging to the other agent.
+#
+# Running map_genconfig by hand fixed it immediately, which is what identified
+# this as a timing problem rather than a logic one.
+#
+# S96: before mapagent (S97), so it starts with the configuration it needs
+# instead of being restarted afterwards. On a healthy boot this script does
+# nothing at all - the guard below is false and it exits.
+
+# Only meaningful where an AP-MLD is configured in the first place.
+uci -q get wireless.mld0 >/dev/null 2>&1 || exit 0
+
+# The agent side already there? Then genconfig has done its job; leave well
+# alone. Rewriting the configuration on every boot is exactly the kind of
+# churn that produces problems rather than solving them.
+uci -q get mapagent.apmld0 >/dev/null 2>&1 && exit 0
+
+logger -t mld-config-check "AP-MLD is configured in wireless but mapagent has no apmld section - running map_genconfig once"
+
+/lib/wifi/multiap conf
+
+if uci -q get mapagent.apmld0 >/dev/null 2>&1; then
+	logger -t mld-config-check "recovered: apmld0 present, mld_id on $(uci show mapagent 2>/dev/null | grep -c '\.mld_id=') fronthaul AP(s)"
+else
+	logger -t mld-config-check "still missing after map_genconfig - this is not the boot race"
+fi

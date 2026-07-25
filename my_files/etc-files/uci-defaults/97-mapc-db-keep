@@ -1,0 +1,8 @@
+#!/bin/sh
+# /etc/uci-defaults/97-mapc-db-keep
+#
+# The EasyMesh controller keeps its persistent state in /etc/mapc/mapc.db.
+# Nothing in the default sysupgrade keep list covers that path, so a firmware
+# upgrade would silently discard the recovery database. Add it once.
+
+grep -qxF /etc/mapc/ /etc/sysupgrade.conf 2>/dev/null || echo /etc/mapc/ >> /etc/sysupgrade.conf

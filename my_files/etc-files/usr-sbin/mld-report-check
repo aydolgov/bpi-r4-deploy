@@ -1,0 +1,95 @@
+#!/bin/sh
+# Make sure the agent actually REPORTS the AP-MLD it is running.
+#
+# agent_init_interfaces() tears the AP-MLD's affiliated-AP attribution down
+# unconditionally (mld_del_ap on every affiliated AP) and rebuilds it behind a
+# band gate. When that gate does not pass, mld.c schedules another init pass -
+# which wipes it again. The teardown is unconditional, the refill is not, and
+# the failure path re-arms the teardown, so once the gate starts failing the
+# set can only stay at zero.
+#
+# Nothing recovers from that on its own: the controller asks (Topology Query,
+# AP Capability Query) and gets the same empty TLV every time, so apmld /
+# affiliated_ap / ttlm quietly collapse in the controller's database while
+# `iw` and `wifi.apmld` on the node still show a perfectly healthy three-link
+# MLD. Every local check says the node is fine.
+#
+# See docs/diagnosis/apmld-affiliated-wiped-by-refresh-2026-07-22.md. This tool
+# treats the symptom; the fix belongs in the teardown, which must not replace a
+# known set with nothing.
+#
+# Measured on bpi-x8, 2026-07-22: after a reboot the node ran 3/3 links and the
+# controller held apmld=1, affiliated_ap=3, ttlm=24 instead of 2 / 6 / 48. A
+# plain query did not recover it - only restarting map-agent did. And a restart
+# can lose the same race again (seen twice on the same node, minutes apart),
+# which is why this retries instead of restarting once and hoping.
+#
+# Runs once per boot from /etc/init.d/mld-report-check, after mld-link-check
+# has had its chance to repair the links themselves - repairing the report
+# before the links exist would only enumerate the same deficit.
+
+ATTEMPTS=3
+# map-agent re-onboards after a restart; the affiliated list is populated well
+# before that finishes, but reading too early sees the empty starting state.
+SETTLE=45
+
+ifname="$(uci -q get wireless.mld0.ifname)"
+[ -n "$ifname" ] || exit 0
+
+# What the node is actually running right now. Deliberately not the configured
+# radio count: if a link is genuinely missing, that is mld-link-check's problem,
+# and this tool must not spin restarting map-agent over a deficit it cannot fix.
+links() {
+	ubus call "wifi.apmld.$ifname" status 2>/dev/null | grep -c '"enabled": true'
+}
+
+# What the node tells the controller.
+#
+# Counted with awk on purpose. `ubus call map.agent status` is NOT valid JSON:
+# the backhaul block opens an object and then puts an unkeyed object inside it,
+#
+#	"backhaul": {
+#		{
+#			"name": "wlan2",
+#
+# where an array was meant. Every parser rejects the whole document for it -
+# jsonfilter with "quoted object property name expected", python with
+# "Expecting property name enclosed in double quotes". A jsonfilter version of
+# this function therefore returned 0 for every node, healthy or not, which
+# would have made this tool restart map-agent three times on every boot and
+# then declare a failure that was not there. Measured 2026-07-22.
+reported() {
+	ubus call map.agent status 2>/dev/null | awk '
+		/"ap_mld":/                     { inmld = 1 }
+		inmld && /"affiliated_ap":/     { inaff = 1; next }
+		inaff && /\]/                   { inaff = 0 }
+		inaff && /"ifname"/             { n++ }
+		END                             { print n + 0 }'
+}
+
+want="$(links)"
+[ "$want" -gt 0 ] 2>/dev/null || exit 0
+
+have="$(reported)"
+[ "$have" -lt "$want" ] 2>/dev/null || exit 0
+
+n=1
+while [ "$n" -le "$ATTEMPTS" ]; do
+	logger -t mld-report-check \
+		"AP-MLD $ifname runs $want links but reports $have affiliated APs - restarting map-agent ($n/$ATTEMPTS)"
+	/etc/init.d/mapagent restart >/dev/null 2>&1
+	sleep "$SETTLE"
+
+	have="$(reported)"
+	if [ "$have" -ge "$want" ] 2>/dev/null; then
+		logger -t mld-report-check "AP-MLD $ifname now reports $have of $want affiliated APs"
+		exit 0
+	fi
+	n=$(( n + 1 ))
+done
+
+# Out of attempts. Say so loudly: a silent failure here looks exactly like a
+# healthy node from every angle except the controller's database.
+logger -t mld-report-check \
+	"AP-MLD $ifname still reports $have of $want affiliated APs after $ATTEMPTS restarts - controller will not see this MLD"
+exit 1

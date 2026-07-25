@@ -1,0 +1,81 @@
+#!/bin/sh
+# Pin every BSSID so it survives a reboot.
+#
+# Without `option macaddr`, /usr/share/ucode/wifi/iface.uc derives each BSS
+# address from a counter incremented in interface preparation order:
+#
+#	let mac_idx = 0;
+#	export function prepare(data, phy, num_global_macaddr, macaddr_base) {
+#		if (!data.macaddr) {
+#			... get_macaddr id=${mac_idx} ...
+#			mac_idx++;
+#
+# So the address a BSS gets depends on the order and count of the interfaces
+# prepared before it, and any change to either shifts every BSSID after it.
+# Measured on bpi-8g across a single reboot - the same three interfaces swapped
+# their 91/92 prefixes:
+#
+#	21. 7.   wlan2 = ...92:7b   wlan2-1 = ...91:79   wlan2-2 = ...91:78
+#	22. 7.   wlan2 = ...91:7b   wlan2-1 = ...92:79   wlan2-2 = ...92:78
+#
+# Anything that stored a BSSID is then wrong: the controller keeps rows for
+# BSSes that no longer exist, lookups by BSSID stop resolving (which is exactly
+# how apmld_clean() leaves a zeroed count behind live is_affiliated_ap flags),
+# and steering could hand a client a BSS that is not on the air.
+#
+# This does not invent addresses. It writes down the ones already in use, so
+# the next boot reproduces them instead of recomputing them.
+#
+# Runs once per boot from /etc/init.d/bssid-pin. It never restarts wifi: the
+# addresses it writes are the ones already running, so there is nothing to
+# apply now - the point is the next boot.
+
+log() { logger -t bssid-pin "$@"; }
+
+changed=0
+pinned=0
+reconciled=0
+
+for s in $(uci show wireless 2>/dev/null | sed -n 's/^wireless\.\([^.]*\)=wifi-iface$/\1/p'); do
+	ifname="$(uci -q get "wireless.$s.ifname")"
+	[ -n "$ifname" ] || continue
+	[ -e "/sys/class/net/$ifname" ] || continue
+
+	live="$(cat "/sys/class/net/$ifname/address" 2>/dev/null)"
+	[ -n "$live" ] || continue
+
+	cfg="$(uci -q get "wireless.$s.macaddr")"
+
+	if [ -z "$cfg" ]; then
+		uci -q set "wireless.$s.macaddr=$live"
+		pinned=$(( pinned + 1 ))
+		changed=1
+		continue
+	fi
+
+	[ "$cfg" = "$live" ] && continue
+
+	# The configured value is not what came up. On a 6 GHz radio that is
+	# expected once: OpenWrt sets mbssid=1 there, and the driver assigns the
+	# non-transmitting BSSes of an MBSSID set itself, so the first pinned
+	# value gets overridden - measured on bpi-x8, a0:11/a0:12 -> a1:11/a1:12,
+	# and stable across every reboot after that.
+	#
+	# Reconcile rather than insist: write down what actually happened, so the
+	# config converges on reality instead of describing a network that is not
+	# there. If this keeps firing for the same interface on every boot, that
+	# is a real finding and the log is where it will show up.
+	log "$ifname: configured $cfg but running $live - reconciling config to reality"
+	uci -q set "wireless.$s.macaddr=$live"
+	reconciled=$(( reconciled + 1 ))
+	changed=1
+done
+
+if [ "$changed" = 1 ]; then
+	uci commit wireless
+	log "pinned $pinned, reconciled $reconciled - BSSIDs will be reproduced on next boot"
+else
+	log "all BSSIDs already pinned and matching"
+fi
+
+exit 0

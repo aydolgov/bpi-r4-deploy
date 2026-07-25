@@ -1,8 +1,20 @@
 #!/bin/sh
 # /etc/uci-defaults/99-set-hostname
+#
+# Name the box after the medium it booted from - but only when it still
+# carries a default name. A node that was deliberately named (lab node,
+# mesh member) keeps its identity across a sysupgrade; overwriting it
+# silently breaks whatever addresses that name is tied to.
+
+cur="$(uci -q get system.@system[0].hostname)"
+case "$cur" in
+    ""|OpenWrt|BPI-R4|BPI-R4-NVMe|BPI-R4-NAND|BPI-R4-eMMC|BPI-R4-SD) ;;
+    *) exit 0 ;;
+esac
+
 if [ -f /sys/firmware/devicetree/base/chosen/rootdisk-nvme ]; then
     hostname="BPI-R4-NVMe"
-elif grep -q 'ubi' /proc/cmdline; then
+elif grep -q ubi /proc/cmdline; then
     hostname="BPI-R4-NAND"
 elif [ -f /sys/firmware/devicetree/base/chosen/rootdisk-emmc ]; then
     hostname="BPI-R4-eMMC"

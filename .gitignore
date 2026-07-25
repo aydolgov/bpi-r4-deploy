@@ -25,3 +25,9 @@ openwrt/
 mtk-openwrt-feeds/
 iopsys-feed/
 *.log
+
+# --- pracovni strom (branch universal-new): build stromy nepatri do gitu ---
+openwrt/
+mtk-openwrt-feeds/
+iopsys-feed/
+*.bak-*
