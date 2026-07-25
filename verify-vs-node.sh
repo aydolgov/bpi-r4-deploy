@@ -38,6 +38,7 @@ etc/uci-defaults/97-mapc-db-keep
 etc/mesh-node-names
 www/cgi-bin/mesh-status
 root/mlo-steerd.sh
+root/node-config.sh
 etc/init.d/mlo-steerd
 etc/init.d/wifimgr-defaults
 "
