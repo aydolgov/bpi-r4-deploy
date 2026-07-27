@@ -12,7 +12,8 @@
 
 ROLE="${1:?usage: mld-bh-verify.sh ap|sta}"
 AP_IF=ap-mld-2
-STA_IF="${STA_IF:-sta-mld-3}"   # genconfig: mld_id=4 -> prefix+(id-1)
+STA_IF="${STA_IF:-bsta-mld-3}"  # bsta- prefix je povinny: libwifi get_wifi_driver()
+                                 # paruje token pres strstr(ifname, token)
 FH_IF=ap-mld-1
 fail=0
 
