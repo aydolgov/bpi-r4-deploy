@@ -20,6 +20,7 @@ LOG=/etc/mapc/heartbeat.log
 INTERVAL=${1:-60}
 MAX_LINES=${2:-4000}
 DMESG_MARK=/tmp/.hb-dmesg-count
+ASSOCBLK_MARK=/tmp/.hb-assocblk
 
 mkdir -p /etc/mapc 2>/dev/null
 H=$(cat /proc/sys/kernel/hostname 2>/dev/null)
@@ -65,8 +66,22 @@ while :; do
 	tmp=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null)
 	[ -n "$tmp" ] && tmp=$((tmp / 1000))
 
-	printf '%s t%-7s %s mem=%-6s load=%-16s mgmt=%-14s br=%-5s ip=%-12s temp=%-4s daemons=%s mld=%s\n' \
-		"$H" "$t" "$now" "$mem" "$load" "$mgmt" "$br" "${ip:--}" "${tmp:--}" "$d" "${mld:- none}" >> "$LOG"
+	# 2026-07-26: a disallow_assoc=1 on a backhaul BSS makes hostapd advertise
+	# MBO "association disallowed". Every bSTA then skips the BSS without ever
+	# sending an auth frame, so the AP side looks completely idle and the node
+	# never rejoins - across reboots, because it is committed to UCI. It cost a
+	# night to find; sample it every minute and shout on any change.
+	blk=$(uci show mapagent 2>/dev/null | grep -c "disallow_assoc='1'")
+	prevblk=$(cat "$ASSOCBLK_MARK" 2>/dev/null)
+	[ -n "$prevblk" ] || prevblk=$blk
+
+	printf '%s t%-7s %s mem=%-6s load=%-16s mgmt=%-14s br=%-5s ip=%-12s temp=%-4s assocblk=%-3s daemons=%s mld=%s\n' \
+		"$H" "$t" "$now" "$mem" "$load" "$mgmt" "$br" "${ip:--}" "${tmp:--}" "$blk" "$d" "${mld:- none}" >> "$LOG"
+
+	if [ "$blk" != "$prevblk" ]; then
+		echo "  ${H} ASSOCBLK disallow_assoc ${prevblk} -> ${blk}: $(uci show mapagent 2>/dev/null | grep "disallow_assoc='1'" | tr '\n' ' ')" >> "$LOG"
+	fi
+	echo "$blk" > "$ASSOCBLK_MARK"
 
 	# new kernel messages since last sample - the only thing likely to explain a
 	# sudden death, and it is gone after a reboot, so it has to be captured live
