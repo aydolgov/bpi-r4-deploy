@@ -12,7 +12,7 @@
 
 ROLE="${1:?usage: mld-bh-verify.sh ap|sta}"
 AP_IF=ap-mld-2
-STA_IF=sta-mld-1
+STA_IF="${STA_IF:-sta-mld-3}"   # genconfig: mld_id=4 -> prefix+(id-1)
 FH_IF=ap-mld-1
 fail=0
 
@@ -82,6 +82,25 @@ sta)
 	*)          printf '  CHYBA %-34s %s\n' "asociace" "${l:-nic}"; fail=$((fail + 1)) ;;
 	esac
 
+	# The 938 criterion. Before that patch wl_mldsta_status() answered
+	# UBUS_STATUS_UNKNOWN_ERROR for this exact object, so map-agent never learned
+	# the uplink was up: no bstamld_parse, no wifi_mod_bridge(add), endless
+	# bsta_scan. Association and per-link traffic looked healthy meanwhile, which
+	# is why this must be checked explicitly and never inferred from iw.
+	if ubus list 2>/dev/null | grep -qx "wifi.bstamld.$STA_IF"; then
+		printf '  OK    %-34s\n' "ubus objekt wifi.bstamld.$STA_IF"
+	else
+		printf '  CHYBA %-34s neexistuje\n' "ubus objekt wifi.bstamld.$STA_IF"
+		fail=$((fail + 1))
+	fi
+	if ubus call "wifi.bstamld.$STA_IF" status >/dev/null 2>&1; then
+		printf '  OK    %-34s odpovida\n' "wifi.bstamld status"
+	else
+		printf '  CHYBA %-34s %s\n' "wifi.bstamld status" \
+			"$(ubus call "wifi.bstamld.$STA_IF" status 2>&1 | head -1)"
+		fail=$((fail + 1))
+	fi
+
 	# Two links up is not the same as two links carrying signal. One non-zero
 	# signal means it associated but is running single-link after all - which is
 	# exactly the outcome that would otherwise be reported as success.
@@ -115,7 +134,12 @@ sta)
 			fail=$((fail + 1))
 		fi
 	done
-	printf '    sta-mld-1 v br-lan: %s\n' "$(ls /sys/class/net/br-lan/brif/ 2>/dev/null | grep -cx "$STA_IF")"
+	if ls /sys/class/net/br-lan/brif/ 2>/dev/null | grep -qx "$STA_IF"; then
+		printf '  OK    %-34s\n' "$STA_IF je port br-lan"
+	else
+		printf '  CHYBA %-34s neni v mostu - nic nepotece\n' "$STA_IF"
+		fail=$((fail + 1))
+	fi
 	;;
 *)
 	echo "usage: mld-bh-verify.sh ap|sta" >&2
