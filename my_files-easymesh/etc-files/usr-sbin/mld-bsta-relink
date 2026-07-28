@@ -26,7 +26,7 @@
 # hostapd brings the radio up -- so no single delay is right for every config.
 FIRST_CHECK=90		# CAC starts ~30 s into boot and runs 60 s on our channels
 INTERVAL=30
-DEADLINE=780		# covers a 600 s CAC plus hostapd start-up and slack
+DEADLINE=210		# standard CAC finishes well before this; see the note below
 SETTLE=25		# both links are up ~20 s after reassociate (measured)
 
 ifname="$(uci -q get wireless.sta_mld_1.ifname)"
@@ -47,9 +47,15 @@ while :; do
 	have="$(iw dev "$ifname" link 2>/dev/null | grep -c '^	Link ')"
 	[ "$have" -lt "$want" ] || break
 
-	# Still short. If CAC is what we are waiting for, the link appears on its
-	# own and no reassociation is needed -- so keep looking before reaching
-	# for the blunt instrument.
+	# Keep looking for a moment: the AP may still be finishing CAC, and if the
+	# link turns up on its own we save a reassociation. But do not wait it out.
+	# MLO links are negotiated during association and never added afterwards,
+	# so a leg missing at this point stays missing until we reassociate.
+	#
+	# Hence 210 s rather than the 600+ s a weather-radar CAC would need: on
+	# those channels the reassociation just happens once, slightly early, and
+	# the helper reports that it did not help. Waiting ten minutes would tax
+	# every ordinary boot to accommodate a rare one.
 	[ "$waited" -lt "$DEADLINE" ] || break
 	sleep "$INTERVAL"
 	waited=$((waited + INTERVAL))
