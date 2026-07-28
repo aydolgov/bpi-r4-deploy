@@ -21,7 +21,12 @@
 # runtime: reassociating a working backhaul on a live mesh is far too blunt an
 # instrument to trigger on a timer.
 
-RELINK_AFTER=150	# CAC starts ~30 s in and lasts 60 s; leave margin for hostapd
+# Poll instead of waiting a fixed time. CAC is 60 s on channels 52-64, but ten
+# minutes on the ETSI weather-radar channels 120-128, and it only starts once
+# hostapd brings the radio up -- so no single delay is right for every config.
+FIRST_CHECK=90		# CAC starts ~30 s into boot and runs 60 s on our channels
+INTERVAL=30
+DEADLINE=780		# covers a 600 s CAC plus hostapd start-up and slack
 SETTLE=25		# both links are up ~20 s after reassociate (measured)
 
 ifname="$(uci -q get wireless.sta_mld_1.ifname)"
@@ -32,14 +37,26 @@ ifname="$(uci -q get wireless.sta_mld_1.ifname)"
 want="$(uci -q get wireless.sta_mld_1.device | wc -w)"
 [ "$want" -gt 1 ] 2>/dev/null || exit 0
 
-sleep "$RELINK_AFTER"
+sleep "$FIRST_CHECK"
 
-[ -e "/sys/class/net/$ifname" ] || exit 0
+waited="$FIRST_CHECK"
+have=0
+while :; do
+	[ -e "/sys/class/net/$ifname" ] || exit 0
 
-have="$(iw dev "$ifname" link 2>/dev/null | grep -c '^	Link ')"
+	have="$(iw dev "$ifname" link 2>/dev/null | grep -c '^	Link ')"
+	[ "$have" -lt "$want" ] || break
+
+	# Still short. If CAC is what we are waiting for, the link appears on its
+	# own and no reassociation is needed -- so keep looking before reaching
+	# for the blunt instrument.
+	[ "$waited" -lt "$DEADLINE" ] || break
+	sleep "$INTERVAL"
+	waited=$((waited + INTERVAL))
+done
 
 if [ "$have" -ge "$want" ]; then
-	logger -t mld-bsta-relink "$ifname has $have/$want links, nothing to do"
+	logger -t mld-bsta-relink "$ifname has $have/$want links after ${waited}s, nothing to do"
 	exit 0
 fi
 
@@ -51,7 +68,7 @@ if [ "$state" != "COMPLETED" ]; then
 	exit 0
 fi
 
-logger -t mld-bsta-relink "$ifname has $have/$want links, reassociating"
+logger -t mld-bsta-relink "$ifname still has $have/$want links after ${waited}s, reassociating"
 wpa_cli -i "$ifname" reassociate >/dev/null 2>&1
 
 sleep "$SETTLE"
