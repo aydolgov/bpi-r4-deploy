@@ -106,12 +106,15 @@ easymesh_install_mld_scripts() {
 	\cp "$E/www-cgi/mesh-status" files/www/cgi-bin/mesh-status; chmod +x files/www/cgi-bin/mesh-status
 	\cp "$E/mesh-node-names"     files/etc/mesh-node-names
 
-	# Kazdy flash zacina generovanym wireless configem, ne zdedenym.
-	# keep-config veze sekce pres generace (8g mel 27.7. sekci bsta-mld-1,
-	# jmeno opustene 16.7.) a map-agent je bere jako platne, protoze
-	# config_find_bsta_wireless() nekontroluje disabled -> duchove v mapagent
-	# bez priority -> "sh: out of range". Cislo 94 = pred 99-drop-legacy-fronthaul.
-	\cp "$E/uci-defaults/94-easymesh-fresh-wireless" files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/94-easymesh-fresh-wireless
+	# Odstrani fantomove bsta sekce, ktere keep-config veze pres generace.
+	# Vznikaji tak, ze config_find_bsta_wireless() nekontroluje disabled, takze
+	# z disabled wireless sekce vznikne mapagent bsta sekce BEZ priority ->
+	# "sh: out of range". Chybejici priority je proto spolehlivy marker.
+	# Patch 999 brani vzniku novych, tohle uklidi ty uz zapsane.
+	# POZOR: NEMAZAT cely wireless config -- zkouseno 28.7. na HW a polozilo to
+	# celou mesh (wifi config vyrobi genericky default bez bSTA a bez backhaul
+	# BSS, agent se pak nema jak onboardovat a genconfig mesh vrstvu nepostavi).
+	\cp "$E/uci-defaults/94-easymesh-drop-phantom-bsta" files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/94-easymesh-drop-phantom-bsta
 
 	# mapc.db keep pres sysupgrade (deterministic recovery vrstva)
 	\cp "$E/uci-defaults/97-mapc-db-keep" files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/97-mapc-db-keep
