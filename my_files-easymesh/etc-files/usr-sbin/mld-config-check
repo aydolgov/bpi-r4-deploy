@@ -28,14 +28,41 @@ uci -q get wireless.mld0 >/dev/null 2>&1 || exit 0
 # The agent side already there? Then genconfig has done its job; leave well
 # alone. Rewriting the configuration on every boot is exactly the kind of
 # churn that produces problems rather than solving them.
-uci -q get mapagent.apmld0 >/dev/null 2>&1 && exit 0
+need=""
+uci -q get mapagent.apmld0 >/dev/null 2>&1 || need="apmld0"
 
-logger -t mld-config-check "AP-MLD is configured in wireless but mapagent has no apmld section - running map_genconfig once"
+# The same race has a second half, and the fronthaul can win it while this one
+# loses - which is why checking apmld0 alone is not enough.
+#
+# map_genconfig writes the backhaul MLD placeholders (mapagent.bhmld_ap_<band>,
+# each carrying mld_id) by walking mapagent.@radio[N]. If it runs before those
+# radio sections exist the loop simply does not iterate, and the placeholders
+# are never written. No error, no warning.
+#
+# Without them apmld_parse() never runs for the backhaul MLD, so it keeps the
+# zeroed macaddr/ssid from calloc() and the controller stores a row of nulls.
+# Measured on the colocated controller 2026-07-28: wireless had mld1 and
+# ap-mld-2 correctly, mapagent had no placeholders, and the controller reported
+# its own backhaul MLD as 00:00:00:00:00:00 with num_ap=0.
+#
+# Test the placeholders, not mapagent.apmld<N>: the agent deletes and rebuilds
+# the apmld sections from the controller TLV on every autoconfig (agent_map.c,
+# uci_delete_mld_config), so their absence later in a boot is normal. The
+# placeholders are not rebuilt from the TLV - they have to be right up front.
+if uci -q get wireless.ap_mld_2 >/dev/null 2>&1; then
+	uci show mapagent 2>/dev/null | grep -q '^mapagent\.bhmld_ap_[0-9]*\.mld_id=' ||
+		need="${need:+$need and }backhaul MLD placeholders"
+fi
+
+[ -n "$need" ] || exit 0
+
+logger -t mld-config-check "AP-MLD is configured in wireless but mapagent is missing $need - running map_genconfig once"
 
 /lib/wifi/multiap conf
 
-if uci -q get mapagent.apmld0 >/dev/null 2>&1; then
-	logger -t mld-config-check "recovered: apmld0 present, mld_id on $(uci show mapagent 2>/dev/null | grep -c '\.mld_id=') fronthaul AP(s)"
+bh="$(uci show mapagent 2>/dev/null | grep -c '^mapagent\.bhmld_ap_[0-9]*\.mld_id=')"
+if uci -q get mapagent.apmld0 >/dev/null 2>&1 || [ "$bh" -gt 0 ]; then
+	logger -t mld-config-check "recovered: apmld0 $(uci -q get mapagent.apmld0 >/dev/null 2>&1 && echo present || echo absent), $bh backhaul placeholder(s), mld_id on $(uci show mapagent 2>/dev/null | grep -c '\.mld_id=') AP(s)"
 else
 	logger -t mld-config-check "still missing after map_genconfig - this is not the boot race"
 fi
