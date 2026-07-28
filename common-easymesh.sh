@@ -61,7 +61,15 @@ easymesh_install_mld_scripts() {
 	# 2026-07-25 zmizel bpi-x8 z meshe I z drateneho mgmt portu dve hodiny po
 	# poslednim census vzorku a nezustalo po nem NIC - zadny crashlog a dmesg po
 	# powercyclu uz popisuje jen novy boot.
-	for s in mld-link-check:S98 mld-config-check:S96 mld-report-check:S99 boot-census:S99 node-heartbeat:S99; do
+	# mld-bsta-relink:S99 dela pro backhaul bSTA to, co mld-link-check pro
+	# fronthaul AP-MLD. 5GHz backhaul link sedi na kanalu 36 @ 160 MHz, tedy
+	# v bloku zasahujicim do DFS -> AP musi odbehnout 60 s CAC a agent se
+	# mezitim pripoji jen na 6 GHz a jednolinkovy zustane (MLO linky se po
+	# asociaci nepridavaji). Namereno 28.7.: CAC start v 30.2 s, agent
+	# asociuje v 36.9 s. Neni to vada - AP dodrzuje predpisy; hlidac jen
+	# pocka a reasociuje. 5GHz fronthaul ceka na tentyz CAC, takze zpozdeni
+	# nic nezhorsuje.
+	for s in mld-link-check:S98 mld-config-check:S96 mld-report-check:S99 boot-census:S99 node-heartbeat:S99 mld-bsta-relink:S99; do
 		local name="${s%%:*}" rc="${s##*:}"
 		\cp "$E/usr-sbin/$name" "files/usr/sbin/$name";  chmod +x "files/usr/sbin/$name"
 		\cp "$E/init.d/$name"   "files/etc/init.d/$name"; chmod +x "files/etc/init.d/$name"

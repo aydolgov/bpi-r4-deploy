@@ -1,0 +1,68 @@
+#!/bin/sh
+# Add the backhaul MLD STA's missing link after a DFS-delayed boot.
+#
+# The 5 GHz backhaul link sits on channel 36 at 160 MHz, so its block spans
+# 5170-5330 MHz and reaches into DFS (channels 52-64). The AP must therefore
+# run a 60 s Channel Availability Check before it may transmit, and during that
+# window the link does not exist. Measured on 4g, 2026-07-28:
+#
+#   [30.18] nl80211_start_radar_detection: center freq1 = 5250, cac time ms = 60000
+#   [36.90] agent associates                                    <- mid-CAC
+#
+# The agent connects to whatever is on the air at that moment, which is the
+# 6 GHz link alone, and stays single-linked: MLO links are negotiated during
+# association and are not added afterwards. A reassociation once CAC has
+# finished brings both legs up, verified on both agents.
+#
+# This is not a driver bug. The AP is behaving exactly as the regulations
+# require; the mesh just has to wait it out.
+#
+# Runs once per boot. Like mld-link-check, it deliberately does nothing at
+# runtime: reassociating a working backhaul on a live mesh is far too blunt an
+# instrument to trigger on a timer.
+
+RELINK_AFTER=150	# CAC starts ~30 s in and lasts 60 s; leave margin for hostapd
+SETTLE=25		# both links are up ~20 s after reassociate (measured)
+
+ifname="$(uci -q get wireless.sta_mld_1.ifname)"
+[ -n "$ifname" ] || exit 0
+
+# How many links this bSTA is configured to span. One radio means there is
+# nothing to recover and reassociating would only cost us the uplink.
+want="$(uci -q get wireless.sta_mld_1.device | wc -w)"
+[ "$want" -gt 1 ] 2>/dev/null || exit 0
+
+sleep "$RELINK_AFTER"
+
+[ -e "/sys/class/net/$ifname" ] || exit 0
+
+have="$(iw dev "$ifname" link 2>/dev/null | grep -c '^	Link ')"
+
+if [ "$have" -ge "$want" ]; then
+	logger -t mld-bsta-relink "$ifname has $have/$want links, nothing to do"
+	exit 0
+fi
+
+# Only touch a backhaul that is actually up. A disconnected bSTA is a different
+# problem -- reassociating it would paper over an onboarding failure.
+state="$(wpa_cli -i "$ifname" status 2>/dev/null | sed -n 's/^wpa_state=//p')"
+if [ "$state" != "COMPLETED" ]; then
+	logger -t mld-bsta-relink "$ifname is $state, not reassociating"
+	exit 0
+fi
+
+logger -t mld-bsta-relink "$ifname has $have/$want links, reassociating"
+wpa_cli -i "$ifname" reassociate >/dev/null 2>&1
+
+sleep "$SETTLE"
+
+now="$(iw dev "$ifname" link 2>/dev/null | grep -c '^	Link ')"
+if [ "$now" -gt "$have" ]; then
+	logger -t mld-bsta-relink "$ifname now has $now/$want links"
+else
+	# Worth saying out loud: it means the second link is missing for some
+	# other reason than CAC, and the DFS explanation does not apply.
+	logger -t mld-bsta-relink "$ifname still has $now/$want links after reassociate"
+fi
+
+exit 0
