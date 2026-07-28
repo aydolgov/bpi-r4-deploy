@@ -14,8 +14,8 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EASYMESH_SHARED="${EASYMESH_SHARED:-${REPO_DIR}/../easymesh-shared}"   # jeden pro všechny buildery
 AUTOBUILD_TARGET="filogic-mac80211-mt798x_rfb-wifi7_nic"              # STEJNÝ jako universal
-OPENWRT_COMMIT="${OPENWRT_COMMIT:-13ff2256e5dd9bc070f9a9c6a673bff4a9191837}"
-MTK_COMMIT="${MTK_COMMIT:-ec6b3fcef259708da3d7d2c189fa108c9bc67ac7}"
+OPENWRT_COMMIT="${OPENWRT_COMMIT:-4d0fec5a4845ba166203a782d08217b3f1cf2af9}"
+MTK_COMMIT="${MTK_COMMIT:-90323e273792e376b4713f4f5761d732df6dafab}"
 
 # shellcheck source=common-easymesh.sh
 . "${EASYMESH_SHARED}/common-easymesh.sh"
