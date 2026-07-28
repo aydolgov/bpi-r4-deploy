@@ -46,6 +46,22 @@ cp /etc/config/mapagent "$BACKUP_DIR/mapagent.$STAMP" 2>/dev/null
 ls -1t "$BACKUP_DIR"/mapagent.* 2>/dev/null | tail -n +6 | while read -r f; do rm -f "$f"; done
 
 removed=0
+
+# A bsta section whose wireless counterpart is disabled describes an interface
+# that will never come up. Both facts are in the config, so this is decidable
+# here, before any radio exists -- unlike "is it in /sys/class/net", which at
+# uci-defaults time would call everything a phantom.
+wireless_is_disabled() {
+	_want="$1"
+	[ -n "$_want" ] || return 1
+	for _ws in $(uci show wireless 2>/dev/null | sed -n 's/^wireless\.\([^.]*\)\.ifname=.*/\1/p'); do
+		[ "$(uci -q get "wireless.$_ws.ifname")" = "$_want" ] || continue
+		[ "$(uci -q get "wireless.$_ws.disabled")" = "1" ] && return 0
+		return 1
+	done
+	return 1
+}
+
 # Walk highest index first: deleting renumbers the anonymous sections below it.
 idx=$(uci show mapagent 2>/dev/null | sed -n 's/^mapagent\.@bsta\[\([0-9]*\)\]=bsta$/\1/p' | sort -n | tail -1)
 [ -n "$idx" ] || idx=-1
@@ -55,12 +71,11 @@ while [ "$idx" -ge 0 ]; do
 	prio="$(uci -q get "mapagent.@bsta[$idx].priority")"
 	is_mld="$(uci -q get "mapagent.@bsta[$idx].is_mld")"
 
-	# An MLD bSTA is written by the other path and always carries priority;
-	# skip it explicitly rather than relying on that, so a future change
-	# there cannot make this delete the uplink.
-	if [ -z "$prio" ] && [ "$is_mld" != "1" ]; then
+	# Never touch the MLD bSTA: it is the uplink, it is written by a different
+	# path, and its wireless section spans several radios.
+	if [ "$is_mld" != "1" ] && { [ -z "$prio" ] || wireless_is_disabled "$ifname"; }; then
 		uci -q delete "mapagent.@bsta[$idx]"
-		logger -t easymesh-fresh "dropped phantom bsta section (ifname=${ifname:-?}, no priority)"
+		logger -t easymesh-fresh "dropped phantom bsta section (ifname=${ifname:-?})"
 		removed=$((removed + 1))
 	fi
 
