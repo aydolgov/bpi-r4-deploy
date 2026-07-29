@@ -115,6 +115,18 @@ if ! uci -q get mapagent.apmld0 >/dev/null 2>&1 ||
 	logger -t mld-report-check \
 		"mapagent is missing its MLD configuration - regenerating before restart"
 	/lib/wifi/multiap conf
+
+	# Leave a durable mark, because the log is not one. logread is a ring
+	# buffer and on a booting node it wraps within minutes: measured
+	# 2026-07-29, the repair line was already gone six minutes after it was
+	# written, so a census taken at the recommended twelve minutes reported a
+	# boot that needed no help. That is the one thing the reliability series
+	# must never get wrong - it is what separates "the boot succeeded" from
+	# "the boot failed and the watchdog covered it".
+	#
+	# /tmp is right: the count belongs to this boot and must not survive one.
+	_n=$(cat /tmp/mld-repairs 2>/dev/null || echo 0)
+	echo $(( _n + 1 )) > /tmp/mld-repairs
 fi
 
 n=1
