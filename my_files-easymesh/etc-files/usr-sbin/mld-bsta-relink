@@ -1,91 +1,119 @@
 #!/bin/sh
-# Add the backhaul MLD STA's missing link after a DFS-delayed boot.
+# Keep the backhaul MLD on all the links it is configured for.
 #
-# The 5 GHz backhaul link sits on channel 36 at 160 MHz, so its block spans
-# 5170-5330 MHz and reaches into DFS (channels 52-64). The AP must therefore
-# run a 60 s Channel Availability Check before it may transmit, and during that
-# window the link does not exist. Measured on 4g, 2026-07-28:
+# An MLD STA fixes its set of links when it associates. If a link is not on the
+# air at that moment - 5 GHz sitting out a 60 s DFS CAC on channel 36 is the
+# ordinary case here - the association completes with fewer legs and never
+# grows one later. Half the backhaul capacity, silently, until something
+# reassociates.
 #
-#   [30.18] nl80211_start_radar_detection: center freq1 = 5250, cac time ms = 60000
-#   [36.90] agent associates                                    <- mid-CAC
+# The first version of this script looked once, between 90 s and 210 s after
+# its own boot, and exited. Two ways that failed, both measured 2026-07-29:
 #
-# The agent connects to whatever is on the air at that moment, which is the
-# 6 GHz link alone, and stays single-linked: MLO links are negotiated during
-# association and are not added afterwards. A reassociation once CAC has
-# finished brings both legs up, verified on both agents.
+#   - It exited on any state other than COMPLETED. In the agents-first test the
+#     agents were still SCANNING at that point, because the controller had not
+#     been switched on yet. The script wrote "not reassociating" and quit; when
+#     the controller appeared a few minutes later both agents associated on
+#     6 GHz alone and stayed one-legged for good.
+#   - The window is tied to this node's boot, not to when the question can be
+#     answered. A controller reboot in production - the common case - happens
+#     long after that window has closed.
 #
-# This is not a driver bug. The AP is behaving exactly as the regulations
-# require; the mesh just has to wait it out.
+# So: look periodically, for as long as the node runs, and act only when acting
+# can help.
 #
-# Runs once per boot. Like mld-link-check, it deliberately does nothing at
-# runtime: reassociating a working backhaul on a live mesh is far too blunt an
-# instrument to trigger on a timer.
+# ⚠️ Reassociating is not free. Measured the same day: a bSTA picks its parent
+# by SSID and signal, nothing else, and one that had been direct on the
+# controller came back attached behind the other agent - two hops through the
+# node with the weakest 6 GHz chain, which cost 85% of throughput and stayed
+# that way. Hence MAX_TRIES, and hence the parent is logged on both sides of
+# the operation: this script may not silently make the node worse.
 
-# Poll instead of waiting a fixed time. CAC is 60 s on channels 52-64, but ten
-# minutes on the ETSI weather-radar channels 120-128, and it only starts once
-# hostapd brings the radio up -- so no single delay is right for every config.
 FIRST_CHECK=90		# CAC starts ~30 s into boot and runs 60 s on our channels
-INTERVAL=30
-DEADLINE=210		# standard CAC finishes well before this; see the note below
+INTERVAL=300		# then keep looking, quietly, for the life of the node
 SETTLE=25		# both links are up ~20 s after reassociate (measured)
+MAX_TRIES=3		# a leg that cannot come up must not cost a link every 5 min
 
 ifname="$(uci -q get wireless.sta_mld_1.ifname)"
 [ -n "$ifname" ] || exit 0
 
-# How many links this bSTA is configured to span. One radio means there is
-# nothing to recover and reassociating would only cost us the uplink.
 want="$(uci -q get wireless.sta_mld_1.device | wc -w)"
 [ "$want" -gt 1 ] 2>/dev/null || exit 0
 
+links() {
+	iw dev "$ifname" link 2>/dev/null | grep -c '^	Link '
+}
+
+parent() {
+	iw dev "$ifname" link 2>/dev/null | sed -n 's/^Connected to \([0-9a-f:]*\).*/\1/p'
+}
+
+state() {
+	wpa_cli -i "$ifname" status 2>/dev/null | sed -n 's/^wpa_state=//p'
+}
+
 sleep "$FIRST_CHECK"
 
-waited="$FIRST_CHECK"
-have=0
+tries=0
+last_have=-1
+gave_up=0
+
 while :; do
 	[ -e "/sys/class/net/$ifname" ] || exit 0
 
-	have="$(iw dev "$ifname" link 2>/dev/null | grep -c '^	Link ')"
-	[ "$have" -lt "$want" ] || break
+	have="$(links)"
 
-	# Keep looking for a moment: the AP may still be finishing CAC, and if the
-	# link turns up on its own we save a reassociation. But do not wait it out.
-	# MLO links are negotiated during association and never added afterwards,
-	# so a leg missing at this point stays missing until we reassociate.
-	#
-	# Hence 210 s rather than the 600+ s a weather-radar CAC would need: on
-	# those channels the reassociation just happens once, slightly early, and
-	# the helper reports that it did not help. Waiting ten minutes would tax
-	# every ordinary boot to accommodate a rare one.
-	[ "$waited" -lt "$DEADLINE" ] || break
+	# Any change in the link count is a new situation: spend the budget again.
+	if [ "$have" != "$last_have" ]; then
+		tries=0
+		gave_up=0
+		last_have="$have"
+	fi
+
+	if [ "$have" -ge "$want" ] 2>/dev/null; then
+		sleep "$INTERVAL"
+		continue
+	fi
+
+	# Not connected yet is not a reason to stop watching - it is the reason to
+	# keep watching. This is exactly where the previous version gave up.
+	if [ "$(state)" != "COMPLETED" ]; then
+		sleep "$INTERVAL"
+		continue
+	fi
+
+	if [ "$tries" -ge "$MAX_TRIES" ]; then
+		if [ "$gave_up" -eq 0 ]; then
+			logger -t mld-bsta-relink \
+				"$ifname stays at $have/$want links after $MAX_TRIES attempts - leaving it alone"
+			gave_up=1
+		fi
+		sleep "$INTERVAL"
+		continue
+	fi
+
+	was="$(parent)"
+	tries=$((tries + 1))
+	logger -t mld-bsta-relink \
+		"$ifname has $have/$want links on $was - reassociating ($tries/$MAX_TRIES)"
+
+	wpa_cli -i "$ifname" reassociate >/dev/null 2>&1
+	sleep "$SETTLE"
+
+	now="$(links)"
+	nowp="$(parent)"
+
+	if [ "$nowp" != "$was" ]; then
+		# Worth saying out loud even when the link count improved: the node may
+		# have gained a leg and lost a hop's worth of throughput at the same time.
+		logger -t mld-bsta-relink \
+			"$ifname now has $now/$want links but changed parent: $was -> $nowp"
+	elif [ "$now" -gt "$have" ] 2>/dev/null; then
+		logger -t mld-bsta-relink "$ifname now has $now/$want links on $nowp"
+	else
+		logger -t mld-bsta-relink "$ifname still has $now/$want links after reassociate"
+	fi
+
+	last_have="$now"
 	sleep "$INTERVAL"
-	waited=$((waited + INTERVAL))
 done
-
-if [ "$have" -ge "$want" ]; then
-	logger -t mld-bsta-relink "$ifname has $have/$want links after ${waited}s, nothing to do"
-	exit 0
-fi
-
-# Only touch a backhaul that is actually up. A disconnected bSTA is a different
-# problem -- reassociating it would paper over an onboarding failure.
-state="$(wpa_cli -i "$ifname" status 2>/dev/null | sed -n 's/^wpa_state=//p')"
-if [ "$state" != "COMPLETED" ]; then
-	logger -t mld-bsta-relink "$ifname is $state, not reassociating"
-	exit 0
-fi
-
-logger -t mld-bsta-relink "$ifname still has $have/$want links after ${waited}s, reassociating"
-wpa_cli -i "$ifname" reassociate >/dev/null 2>&1
-
-sleep "$SETTLE"
-
-now="$(iw dev "$ifname" link 2>/dev/null | grep -c '^	Link ')"
-if [ "$now" -gt "$have" ]; then
-	logger -t mld-bsta-relink "$ifname now has $now/$want links"
-else
-	# Worth saying out loud: it means the second link is missing for some
-	# other reason than CAC, and the DFS explanation does not apply.
-	logger -t mld-bsta-relink "$ifname still has $now/$want links after reassociate"
-fi
-
-exit 0
