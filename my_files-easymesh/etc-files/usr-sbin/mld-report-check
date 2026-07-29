@@ -73,6 +73,30 @@ want="$(links)"
 have="$(reported)"
 [ "$have" -lt "$want" ] 2>/dev/null || exit 0
 
+# A restart cannot fix a configuration that is not there.
+#
+# map_genconfig writes mapagent.apmld0 and the backhaul MLD placeholders only
+# inside its mt76 branch, and that branch is entered on [ -d /sys/module/mt76 ].
+# A boot where genconfig runs before the driver module is loaded takes the
+# non-MLO path instead: it rebuilds the ap sections without a single mld
+# section, and the node ends up advertising an AP-MLD with no affiliated links.
+#
+# Measured on the colocated controller 2026-07-29: hostapd ran ap-mld-1 with
+# three links, mapagent had six ap sections and no mld section at all, and the
+# three restarts below changed nothing - the give-up line was written and the
+# controller stored num_ap=0 for both of its own MLDs. Running map_genconfig by
+# hand and restarting the agent once brought them back to 2 and 3.
+#
+# mld-config-check makes this same test at S96, before map-agent starts, where
+# the sections are still present and the guard is therefore false. It has to be
+# made again here, at S99, after whatever removed them has run.
+if ! uci -q get mapagent.apmld0 >/dev/null 2>&1 ||
+   ! uci show mapagent 2>/dev/null | grep -q "^mapagent\\.bhmld_ap_[0-9]*\\.mld_id="; then
+	logger -t mld-report-check \
+		"mapagent is missing its MLD configuration - regenerating before restart"
+	/lib/wifi/multiap conf
+fi
+
 n=1
 while [ "$n" -le "$ATTEMPTS" ]; do
 	logger -t mld-report-check \
