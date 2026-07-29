@@ -67,6 +67,26 @@ reported() {
 		END                             { print n + 0 }'
 }
 
+# The wifi.apmld object appears only once hostapd and wifimngr are up, which on
+# a cold boot is well after S99. Asking before that returns 0 and the check
+# exits silently, which is the worst possible outcome: the node is left broken
+# and the log says nothing at all.
+#
+# Measured 2026-07-29 on the colocated controller: it came up with no mapagent
+# mld section, reported num_ap=0 for both its MLDs, and this script never wrote
+# a single line. Run by hand two minutes later, once the object existed, it
+# repaired the node on the first attempt.
+#
+# So wait for the object rather than assuming it. WAIT_MAX bounds it, because a
+# node that genuinely has no AP-MLD must still be able to exit.
+WAIT_MAX=300
+waited=0
+while [ "$(links)" -eq 0 ] 2>/dev/null && [ "$waited" -lt "$WAIT_MAX" ]; do
+	sleep 10
+	waited=$(( waited + 10 ))
+done
+[ "$waited" -eq 0 ] || logger -t mld-report-check "waited ${waited}s for $ifname to appear"
+
 want="$(links)"
 [ "$want" -gt 0 ] 2>/dev/null || exit 0
 
