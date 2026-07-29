@@ -39,8 +39,15 @@ easymesh_apply_wifi_patches() {
 	# discards under PMF, the AP never enables WDS for it, and mac80211 reports
 	# the unexpected 4-address frame only once - so the node stays associated,
 	# reports every link up, and moves nothing. Measured twice on 2026-07-29.
-	\cp -r "$P/0266-mld-fallback-assoc-req-ok.patch" \
-		"$MAC80211/package/network/services/hostapd/patches/0266-mld-fallback-assoc-req-ok.patch"
+	\cp -r "$P/0266-mld-find-sta-pending-assoc.patch" \
+		"$MAC80211/package/network/services/hostapd/patches/0266-mld-find-sta-pending-assoc.patch"
+
+	# AP MLD: the link AID must be marked with the same offset it was allocated
+	# with, or two stations get the same AID - and since the 4-address peer
+	# interface name is derived from it, the second one is pointed at an interface
+	# the first already owns and its bind fails with -EBUSY. Measured 2026-07-29.
+	\cp -r "$P/0267-mld-link-aid-offset.patch" \
+		"$MAC80211/package/network/services/hostapd/patches/0267-mld-link-aid-offset.patch"
 
 	# per-band WiFi LED (MT7996 single-wiphy MLO) + shared tpt trigger.
 	\cp -r "$P/999-wifi-01-mt7996-per-band-leds.patch" \
