@@ -33,6 +33,15 @@ easymesh_apply_wifi_patches() {
 	\cp -r "$P/0264-wpa_s-add-btwt-join-command.patch" \
 		"$MAC80211/package/network/services/hostapd/patches/0264-wpa_s-add-btwt-join-command.patch"
 
+	# AP MLD: ap_get_sta() MLD fallback must also find a station that has been
+	# answered but not yet acked (WLAN_STA_ASSOC_REQ_OK). Without it an MLD
+	# station whose first 4-address frame lands in that window gets a deauth it
+	# discards under PMF, the AP never enables WDS for it, and mac80211 reports
+	# the unexpected 4-address frame only once - so the node stays associated,
+	# reports every link up, and moves nothing. Measured twice on 2026-07-29.
+	\cp -r "$P/0266-mld-fallback-assoc-req-ok.patch" \
+		"$MAC80211/package/network/services/hostapd/patches/0266-mld-fallback-assoc-req-ok.patch"
+
 	# per-band WiFi LED (MT7996 single-wiphy MLO) + shared tpt trigger.
 	\cp -r "$P/999-wifi-01-mt7996-per-band-leds.patch" \
 		"$MAC80211/package/kernel/mt76/patches/9999-w-mt7996-per-band-leds.patch"
