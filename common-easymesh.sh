@@ -174,14 +174,14 @@ easymesh_install_mld_scripts() {
 # na disku VM1. Od 25. 7. je zrcadleno:
 #
 #   remote woziwrt = https://github.com/woziwrt/iopsys-feed.git  (private)
-#   branch devel, tag easymesh-pin-2026-07-30b -> 1a49cf7fd
+#   branch devel, tag easymesh-pin-2026-07-30c -> 205a74795
 #
 # Pri obnove na cistem stroji klonovat odtud, ne z upstreamu - upstream nase
 # patche nema. Po zmene ve feedu: commit + `git push woziwrt devel` + posunout
 # pin nize, jinak `git reset --hard` v teto funkci tu zmenu pri buildu zahodi.
 easymesh_setup_iopsys_feed() {
 	# pin na týž commit jako original builder (L152), fallback HEAD
-	( cd "${EASYMESH_SHARED}/iopsys-feed" && git reset --hard 1a49cf7fd && git clean -fd ) 2>/dev/null || \
+	( cd "${EASYMESH_SHARED}/iopsys-feed" && git reset --hard 205a74795 && git clean -fd ) 2>/dev/null || \
 	( cd "${EASYMESH_SHARED}/iopsys-feed" && git reset --hard HEAD && git clean -fd ) 2>/dev/null || true
 	grep -q "src-link iopsys" feeds.conf.default || \
 		echo "src-link iopsys ${EASYMESH_SHARED}/iopsys-feed" >> feeds.conf.default
