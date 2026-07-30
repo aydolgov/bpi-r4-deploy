@@ -101,6 +101,24 @@ easymesh_install_mld_scripts() {
 		ln -sf "../init.d/$name" "files/etc/rc.d/${rc}${name}"
 	done
 
+	# DIAGNOSTIKA (docasna, 2026-07-30): kdo maze MLD vrstvu z konfigurace.
+	#
+	# Po flashi je konfigurace ve 13. s kompletni a do 180. s z ni zmizi cela
+	# MLD vrstva. Genconfig byl rucnim pokusem na bezicim uzlu VYLOUCEN.
+	# Dve pasti soucasne, protoze zadna sama nestaci:
+	#
+	#   /usr/sbin/uci   shim pred /sbin/uci (PATH ma /usr/sbin driv) - zapise
+	#                   kazdy zapisujici prikaz i s volajicim. Chyti vsechny
+	#                   shell skripty: genconfig, uci-defaults, hotplug.
+	#   mld-watch:S02   sleduje soubor primo a pri zmene poctu mld sekci ulozi
+	#                   snimek bezicich procesu. Chyti map-agenta, ktery pise
+	#                   pres libuci (33 symbolu uci_*) a shim ho mine.
+	#
+	# Oboji pise do /etc/mapc (prezije reboot). Az bude vinik znam, pryc.
+	\cp "$E/usr-sbin/uci-trace-shim" files/usr/sbin/uci; chmod +x files/usr/sbin/uci
+	\cp "$E/init.d/mld-watch" files/etc/init.d/mld-watch; chmod +x files/etc/init.d/mld-watch
+	ln -sf ../init.d/mld-watch files/etc/rc.d/S02mld-watch
+
 	# bssid-pin: JEN nástroj do /usr/sbin, ŽÁDNÝ init.d skript.
 	#
 	# Vynechání rc.d symlinku službu NEVYPNE: OpenWrt při stavbě rootfs povolí

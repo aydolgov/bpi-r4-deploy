@@ -1,0 +1,33 @@
+#!/bin/sh
+# Diagnostický shim: kdo sahá na konfiguraci.
+#
+# PATH je /usr/sbin:/usr/bin:/sbin:/bin, takže tenhle soubor má přednost před
+# skutečným /sbin/uci. Zapíše zapisující příkazy i s tím, kdo je volá, a předá
+# je dál. Nic nemění.
+#
+# Proč: 30. 7. 2026 byla konfigurace ve 13. sekundě po flashi kompletní
+# (apmld0, apmld1, bhmld_ap_* s mld_id) a do 180. sekundy z ní zmizela celá MLD
+# vrstva. Genconfig byl ručním pokusem na běžícím uzlu vyloučen — spuštěný na
+# zdravé konfiguraci ji nezměnil. Kdo ji tedy maže, se nepodařilo určit.
+#
+# Čte se pouze při vyšetřování. Až bude viník znám, tenhle soubor pryč.
+#
+# POZOR: cokoli se tu rozbije, rozbije uci pro celý systém. Proto je to trivální
+# a zápis do logu nesmí být fatální.
+
+case "$1" in
+	set|delete|add|add_list|del_list|rename|commit|revert|import|batch)
+		{
+			_p=$(cat /proc/$PPID/comm 2>/dev/null)
+			_pp=$(cat /proc/$PPID/stat 2>/dev/null | awk '{print $4}')
+			_g=$(cat /proc/${_pp:-0}/comm 2>/dev/null)
+			printf '%s up=%ss %s <- %s :: uci' \
+				"$(date '+%H:%M:%S')" "$(cut -d. -f1 /proc/uptime)" \
+				"${_p:-?}" "${_g:-?}"
+			for _a in "$@"; do printf ' %s' "$_a"; done
+			printf '\n'
+		} >> /etc/mapc/uci-trace.log 2>/dev/null
+		;;
+esac
+
+exec /sbin/uci "$@"

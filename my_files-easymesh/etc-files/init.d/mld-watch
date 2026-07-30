@@ -1,0 +1,55 @@
+#!/bin/sh /etc/rc.common
+# Druhá past: kdy zmizí MLD vrstva z konfigurace a co v tu chvíli běželo.
+#
+# CLI shim (/usr/sbin/uci) chytí každého, kdo píše přes příkaz uci. Nechytí ale
+# map-agenta — ten má 33 symbolů uci_* a píše přes libuci přímo. Tenhle hlídač
+# doplňuje druhou polovinu: nesleduje, KDO volá, ale KDY se stav změní, a bere
+# k tomu snímek běžících procesů.
+#
+# Čte soubor přímo, ne přes uci, aby si nezanášel vlastní shim.
+#
+# Měřeno 30. 7. 2026: ve 13. s po flashi konfigurace kompletní, ve 180. s bez
+# jediné MLD sekce. Okno je tedy krátké a nespojité s ničím, co bychom uměli
+# pojmenovat.
+
+START=02
+STOP=99
+
+WATCH=/etc/config/mapagent
+LOG=/etc/mapc/mld-watch.log
+DUR=300
+
+start() {
+	mkdir -p /etc/mapc 2>/dev/null
+	(
+		last=""
+		t=0
+		while [ "$t" -lt "$DUR" ]; do
+			n=$(grep -c "^config mld" "$WATCH" 2>/dev/null)
+			a=$(grep -c "^config ap" "$WATCH" 2>/dev/null)
+			i=$(grep -c "option mld_id" "$WATCH" 2>/dev/null)
+			cur="mld=$n ap=$a mld_id=$i"
+
+			if [ "$cur" != "$last" ]; then
+				{
+					echo "=== $(date '+%H:%M:%S')  up=$(cut -d. -f1 /proc/uptime)s  $cur ==="
+					[ -n "$last" ] && echo "    predtim: $last"
+					echo "--- bezici procesy ---"
+					ps w 2>/dev/null | grep -vE "\[|ps w|grep" | tail -25
+					echo "--- poslednich 5 radku uci-trace ---"
+					tail -5 /etc/mapc/uci-trace.log 2>/dev/null
+					echo
+				} >> "$LOG" 2>&1
+				last="$cur"
+			fi
+
+			t=$((t + 1))
+			sleep 1
+		done
+		echo "=== $(date '+%H:%M:%S') hlidani skoncilo po ${DUR}s ===" >> "$LOG" 2>&1
+	) &
+}
+
+stop() {
+	:
+}
