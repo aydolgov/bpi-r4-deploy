@@ -38,6 +38,36 @@
 # is the flash that reverts it, which is why three flashes repaired and one
 # reboot did not.
 
+# Zaznamenat stav PRED genconfigem.
+#
+# Tenhle skript bezi jako uci-default pred 991-multiap-genconfig, tedy v jedinem
+# okamziku, kdy je videt, co po flashi zbylo, nez to genconfig prepsal. Vsechna
+# dosavadni mereni byla az v S99 (mld-report-check), a to je o tri minuty pozde:
+# /etc/config/mapagent uz je prepsany a jeho mtime patri genconfigu.
+#
+# Rozhoduje mezi dvema vyklady, ktere z pozdejsiho snimku rozlisit nejdou:
+#   A) konfigurace flash prezila -> genconfig ji nemel regenerovat, a presto
+#      MLD sekce zmizely
+#   B) konfigurace flash neprezila -> genconfig regeneroval a MLD vetev se
+#      netrefila
+# Pocet radio sekci to rozhodne: 3 = A, 0 = B.
+_ev=/etc/mapc/mld-report-evidence.log
+mkdir -p /etc/mapc 2>/dev/null
+{
+	echo "=== PRED GENCONFIGEM  $(date '+%Y-%m-%d %H:%M:%S')  uptime $(cut -d. -f1 /proc/uptime)s ==="
+	echo "radio sekci:  $(uci show mapagent 2>/dev/null | grep -c '=radio$')"
+	echo "mld sekci:    $(uci show mapagent 2>/dev/null | grep -c '=mld$')"
+	echo "ap sekci:     $(uci show mapagent 2>/dev/null | grep -c '=ap$')"
+	echo "mld_backhaul: $(uci -q get mapagent.agent.mld_backhaul)"
+	echo "apmld0:       $(uci -q get mapagent.apmld0 >/dev/null 2>&1 && echo present || echo missing)"
+	echo "bhmld mld_id: $(uci show mapagent 2>/dev/null | grep -c 'bhmld_ap_[0-9]*\.mld_id=')"
+	echo "wifi-device:  $(uci show wireless 2>/dev/null | grep -c '=wifi-device$')"
+	echo "mt76 modul:   $([ -d /sys/module/mt76 ] && echo ano || echo NE)"
+	echo "phy:          $(ls /sys/class/ieee80211/ 2>/dev/null | tr '\n' ' ')"
+	echo "mapagent mtime: $(ls -la /etc/config/mapagent 2>/dev/null)"
+	echo
+} >> "$_ev" 2>&1
+
 uci -q get mapagent.agent >/dev/null 2>&1 || uci set mapagent.agent=agent
 
 [ "$(uci -q get mapagent.agent.mld_backhaul)" = "1" ] || {
