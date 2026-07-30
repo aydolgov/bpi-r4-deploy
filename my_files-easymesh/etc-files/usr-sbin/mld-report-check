@@ -110,10 +110,43 @@ have="$(reported)"
 # mld-config-check makes this same test at S96, before map-agent starts, where
 # the sections are still present and the guard is therefore false. It has to be
 # made again here, at S99, after whatever removed them has run.
-if ! uci -q get mapagent.apmld0 >/dev/null 2>&1 ||
-   ! uci show mapagent 2>/dev/null | grep -q "^mapagent\\.bhmld_ap_[0-9]*\\.mld_id="; then
+# Record which of the two halves tripped, and the state that made it trip,
+# before repairing it.
+#
+# Both halves shared one log line, and by the time anyone can look at the node
+# the repair has already run - /etc/config/mapagent is rewritten and its mtime is
+# the repair, not the boot. Measured the cost of that on 2026-07-30: the wrong
+# half was patched (map-agent renaming the sections, 979 - a real defect, but not
+# this trigger), the watchdog fired again on the next flash, and the day lost a
+# build cycle to a guess that two shell commands would have settled.
+#
+# Three flashes that day repaired; one plain reboot and one map-agent restart did
+# not. So the trigger is specific to the boot after a flash, and the evidence
+# needed is what the configuration looked like at S99 on such a boot. Nothing
+# else can capture it: querying from outside is too late, and logread wraps.
+_ev=/etc/mapc/mld-report-evidence.log
+mkdir -p /etc/mapc 2>/dev/null
+_apmld0=missing
+_bhmld_id=missing
+uci -q get mapagent.apmld0 >/dev/null 2>&1 && _apmld0=present
+uci show mapagent 2>/dev/null | grep -q "^mapagent\\.bhmld_ap_[0-9]*\\.mld_id=" &&
+	_bhmld_id=present
+
+if [ "$_apmld0" = missing ] || [ "$_bhmld_id" = missing ]; then
+	{
+		echo "=== $(date '+%Y-%m-%d %H:%M:%S')  uptime $(cut -d. -f1 /proc/uptime)s ==="
+		echo "apmld0=$_apmld0  bhmld_ap_*.mld_id=$_bhmld_id"
+		echo "-- mapagent sections --"
+		uci show mapagent 2>/dev/null | grep -E "=(mld|ap|bsta|radio)$"
+		echo "-- mld_id options --"
+		uci show mapagent 2>/dev/null | grep "mld_id="
+		echo "-- /etc/config/mapagent mtime --"
+		ls -la /etc/config/mapagent 2>/dev/null
+		echo
+	} >> "$_ev" 2>&1
+
 	logger -t mld-report-check \
-		"mapagent is missing its MLD configuration - regenerating before restart"
+		"mapagent is missing its MLD configuration (apmld0=$_apmld0 bhmld_id=$_bhmld_id) - regenerating before restart"
 	/lib/wifi/multiap conf
 
 	# Leave a durable mark, because the log is not one. logread is a ring
