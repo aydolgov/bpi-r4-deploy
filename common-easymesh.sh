@@ -49,6 +49,15 @@ easymesh_apply_wifi_patches() {
 	\cp -r "$P/0267-mld-link-aid-offset.patch" \
 		"$MAC80211/package/network/services/hostapd/patches/0267-mld-link-aid-offset.patch"
 
+	# AP MLD: ap_free_sta() releases the AID and tears down the 4-address peer
+	# interface for every sta_info it frees, including the per-link copies that
+	# share the station's AID. So the AID goes back into the general pool while
+	# its owner still holds it, and the next station is handed the same one.
+	# Companion to 0267: that one fixed how the AID is marked, this one fixes
+	# when it is released. Measured 2026-07-30.
+	\cp -r "$P/0268-mld-link-free-keeps-aid.patch" \
+		"$MAC80211/package/network/services/hostapd/patches/0268-mld-link-free-keeps-aid.patch"
+
 	# per-band WiFi LED (MT7996 single-wiphy MLO) + shared tpt trigger.
 	\cp -r "$P/999-wifi-01-mt7996-per-band-leds.patch" \
 		"$MAC80211/package/kernel/mt76/patches/9999-w-mt7996-per-band-leds.patch"
