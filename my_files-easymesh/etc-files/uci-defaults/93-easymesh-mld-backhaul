@@ -1,0 +1,49 @@
+#!/bin/sh
+# The MLO backhaul is opt-in, and the opt-in has to be in the image.
+#
+# map_genconfig generates the backhaul MLD only behind
+#
+#	[ "$(uci -q get mapagent.agent.mld_backhaul)" = "1" ] && {
+#
+# with the comment "Opt-in: without mld_backhaul=1 nothing". Nothing in the image
+# sets that flag: it is absent from the map-agent package default
+# (/rom/etc/config/mapagent), no script sets it, and no uci-default did until
+# this one. It existed only in the running configuration - which is precisely the
+# thing a flash starts over.
+#
+# So on the first boot after every flash, genconfig ran without it and produced a
+# legacy, non-MLO configuration: no mld sections, no bhmld_ap_*, no mld_id.
+# mld-report-check then regenerated everything and restarted map-agent about
+# three minutes in, and that restart is not free - it costs a deauth/reassoc
+# storm on every associated backhaul.
+#
+# Measured on the controller 2026-07-30, three flashes in a row, each with
+# repairs=1. The fourth flash carried instrumentation that recorded what the
+# watchdog actually saw at S99:
+#
+#	apmld0=missing  bhmld_ap_*.mld_id=missing
+#	-- mapagent sections --
+#	@radio[0] @ap[0] @radio[1] @ap[1] @ap[2] @radio[2] @ap[3] @ap[4] @ap[5]
+#	-- mld_id options --        (none)
+#	/etc/config/mapagent        mtime = boot + 30s
+#
+# Radios and AP sections present, every MLD trace absent, written half a minute
+# into the boot. That is genconfig taking the legacy branch, not something
+# deleting MLD configuration afterwards.
+#
+# Numbered 93 so it lands before 991-multiap-genconfig from the map-agent
+# package, which is what actually reads the flag.
+#
+# A plain reboot never needed this - the flag survives in the configuration. It
+# is the flash that reverts it, which is why three flashes repaired and one
+# reboot did not.
+
+uci -q get mapagent.agent >/dev/null 2>&1 || uci set mapagent.agent=agent
+
+[ "$(uci -q get mapagent.agent.mld_backhaul)" = "1" ] || {
+	uci set mapagent.agent.mld_backhaul='1'
+	uci commit mapagent
+	logger -t easymesh-seed "seeded mapagent.agent.mld_backhaul=1 before genconfig"
+}
+
+exit 0
