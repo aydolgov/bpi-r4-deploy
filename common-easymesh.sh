@@ -147,6 +147,15 @@ easymesh_install_mld_scripts() {
 	# POZOR: NEMAZAT cely wireless config -- zkouseno 28.7. na HW a polozilo to
 	# celou mesh (wifi config vyrobi genericky default bez bSTA a bez backhaul
 	# BSS, agent se pak nema jak onboardovat a genconfig mesh vrstvu nepostavi).
+	# Opt-in MLO backhaul: genconfig generuje backhaulovou MLD jen pod
+	# mapagent.agent.mld_backhaul=1 ("Opt-in: without mld_backhaul=1 nothing"),
+	# a ten priznak nikdo do obrazu nedaval - zil jen v behove konfiguraci,
+	# tedy presne v tom, co flash zacina znovu. Prvni beh genconfigu po kazdem
+	# flashi proto sel legacy vetvi a hlidac to o tri minuty pozdeji opravoval
+	# restartem map-agenta. Merene 30.7.: 3 flashe = 3x repairs=1, jeden reboot
+	# = repairs=0. Musi bezet PRED 991-multiap-genconfig, ktery ten priznak cte.
+	\cp "$E/uci-defaults/93-easymesh-mld-backhaul" files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/93-easymesh-mld-backhaul
+
 	\cp "$E/uci-defaults/94-easymesh-drop-phantom-bsta" files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/94-easymesh-drop-phantom-bsta
 
 	# mapc.db keep pres sysupgrade (deterministic recovery vrstva)
