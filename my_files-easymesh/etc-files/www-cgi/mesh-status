@@ -145,8 +145,15 @@ echo "onboarded here. Run <code>mesh-env</code> on each node for the real answer
 #   * It mixed backhaul links in with clients. They are mesh plumbing, they
 #     outnumber the clients, and sourcing them from `sta` was the reason the
 #     whole list went blank after a controller restart (see below).
+#   * It counted one MLO client as several devices. Each affiliated link of
+#     an MLD gets its own row in `sta` under its own address, so the iPhone on
+#     2026-08-03 appeared four times - once per link plus the MLD itself - and
+#     the page said "5 client device(s)" when two were present, one of them a
+#     ghost. affiliated_sta maps every link address to its MLD, so a row that
+#     appears there is a leg, not a device, and is folded away here.
 echo "<h2>Clients &mdash; who is connected where</h2>"
-NSTA=$(q "SELECT count(*) FROM sta WHERE COALESCE(is_bsta,0)=0")
+NSTA=$(q "SELECT count(*) FROM sta WHERE COALESCE(is_bsta,0)=0
+                  AND macaddr NOT IN (SELECT macaddr FROM affiliated_sta)")
 if [ "${NSTA:-0}" = "0" ]; then
 	echo "<p class=note>No client devices. Backhaul links are listed separately below.</p>"
 else
@@ -161,6 +168,7 @@ else
 	          (SELECT p.agent_almac FROM sta_mld m JOIN apmld p ON p.mld_macaddr = m.ap_mld_macaddr
 	             WHERE m.mld_macaddr = s.macaddr)
 	   FROM sta s WHERE COALESCE(s.is_bsta,0)=0
+	     AND s.macaddr NOT IN (SELECT macaddr FROM affiliated_sta)
 	   ORDER BY s.hostname, s.macaddr" |
 	while IFS='|' read -r name agent assoc ismld mldbands band age mldagent; do
 		if [ "${ismld:-0}" != "0" ] && [ -n "$mldbands" ]; then
@@ -190,7 +198,14 @@ else
 		fi
 
 		state=$([ "$assoc" = "1" ] && echo '<span class=ok>connected</span>' || echo 'left')
-		if [ "$assoc" = "1" ] && [ -n "$age" ] && [ "$age" -ge 300 ] 2>/dev/null; then
+		if [ "$assoc" = "1" ] && [ -z "$age" ]; then
+			# No sta_mld row means no record here carries a timestamp, so
+			# "connected" is a claim this page cannot support. Measured
+			# 2026-08-03: a ghost left over from an earlier client still read
+			# connected on a full MLO band list, indistinguishable from the
+			# phone that was actually there.
+			state='<span class=warn>unverified</span>'
+		elif [ "$assoc" = "1" ] && [ -n "$age" ] && [ "$age" -ge 300 ] 2>/dev/null; then
 			state='<span class=warn>stale</span>'
 		fi
 
