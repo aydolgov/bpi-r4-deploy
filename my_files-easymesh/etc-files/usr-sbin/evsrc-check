@@ -75,13 +75,28 @@ for s in "$DIR"/*; do
 	[ "${m:-0}" -gt "$newest" ] && newest=$m
 done
 
-if [ "$newest" -le "$started" ]; then
-	# Every socket predates wifimngr, so its registrations point at sockets
-	# that are still the live ones.
+# Second test, and it catches what the timestamp alone cannot: a socket FILE
+# can exist before hostapd is ready to serve connections on it, so wpa_ctrl_open
+# fails and the source is registered dormant while its socket looks older than
+# wifimngr. Measured on bpi-4g after the 2026-08-04 flash: every socket predated
+# wifimngr, the timestamp test passed, and wifimngr was holding 3 sockets for 7
+# sources - six dead registrations and no events at all.
+#
+# Each live registration holds at least one socket on top of wifimngr's own ubus
+# connection, and an MLD parent holds one per affiliated link, so a healthy
+# wifimngr sits well above the source count.
+socks=$(ls -l "/proc/$pid/fd" 2>/dev/null | grep -c socket)
+
+if [ "$newest" -le "$started" ] && [ "${socks:-0}" -gt "$want" ]; then
+	# Sockets all predate wifimngr AND it is holding one per source.
 	exit 0
 fi
 
-logger -t "$TAG" "wifimngr started at $started, newest hostapd socket is $newest ($((newest - started))s later) - it cannot be attached to it; restarting"
+if [ "$newest" -gt "$started" ]; then
+	logger -t "$TAG" "wifimngr started at $started, newest hostapd socket is $newest ($((newest - started))s later) - it cannot be attached to it; restarting"
+else
+	logger -t "$TAG" "wifimngr holds $socks socket(s) for $want event source(s) - registrations are dormant; restarting"
+fi
 
 /etc/init.d/wifimngr restart >/dev/null 2>&1
 sleep 5
