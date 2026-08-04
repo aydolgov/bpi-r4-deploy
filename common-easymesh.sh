@@ -102,7 +102,16 @@ easymesh_install_mld_scripts() {
 	# prokazatelne funguje. Poradi je zamerne: pozdejsi zapis by vyzadoval
 	# `wifi reload`, coz je na MT7996 pri formovani meshe to nejhorsi, co
 	# muzeme udelat.
-	for s in wnm-enable:S19 mld-link-check:S98 mld-config-check:S96 mld-report-check:S99 boot-census:S99 node-heartbeat:S99 mld-bsta-relink:S99; do
+	# wifi-evmap:S94 bezi po ustaleni wireless konfigurace a PRED wifimngr
+	# (S95). Bez /etc/wifi.json wifimngr selze uz na otevreni souboru a
+	# nezaregistruje ZADNY zdroj udalosti - kazdy producent v libwifi je pak
+	# mrtvy kod a klienta se agent dozvi az pollingem, po minutach. Balicek
+	# ten soubor nedodava a nic jineho ho nevyrabi.
+	# Generuje JEDNU polozku NA LINKU: wifimngr hlida jen socks[0], coz je
+	# rodicovsky socket, a na ten hostapd nic neposila (asociace chodi na
+	# ap-mld-1_linkN, zmereno 4.8.). Pri jedne polozce na cely MLD se tedy
+	# nedrenuje nic. HW overeno na x8: tri wifi.sta na tri nohy MLO.
+	for s in wifi-evmap:S94 wnm-enable:S19 mld-link-check:S98 mld-config-check:S96 mld-report-check:S99 boot-census:S99 node-heartbeat:S99 mld-bsta-relink:S99; do
 		local name="${s%%:*}" rc="${s##*:}"
 		\cp "$E/usr-sbin/$name" "files/usr/sbin/$name";  chmod +x "files/usr/sbin/$name"
 		\cp "$E/init.d/$name"   "files/etc/init.d/$name"; chmod +x "files/etc/init.d/$name"
@@ -219,7 +228,7 @@ easymesh_install_mld_scripts() {
 # pin nize, jinak `git reset --hard` v teto funkci tu zmenu pri buildu zahodi.
 easymesh_setup_iopsys_feed() {
 	# pin na týž commit jako original builder (L152), fallback HEAD
-	( cd "${EASYMESH_SHARED}/iopsys-feed" && git reset --hard 82d3658b4 && git clean -fd ) 2>/dev/null || \
+	( cd "${EASYMESH_SHARED}/iopsys-feed" && git reset --hard b9b501443 && git clean -fd ) 2>/dev/null || \
 	( cd "${EASYMESH_SHARED}/iopsys-feed" && git reset --hard HEAD && git clean -fd ) 2>/dev/null || true
 	grep -q "src-link iopsys" feeds.conf.default || \
 		echo "src-link iopsys ${EASYMESH_SHARED}/iopsys-feed" >> feeds.conf.default
