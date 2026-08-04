@@ -48,9 +48,11 @@ iopsys-feed      19507bd73   vetev devel           → woziwrt/devel   ✅
 easymesh-shared  9b33a6e     vetev easymesh-shared → origin          ✅
 pin v common-easymesh.sh: 19507bd73                                  ✅
 
-TAGY (pushnuté) — OBSAHUJÍ VŠE VČETNĚ TĚCHTO DOKUMENTŮ:
-  iopsys-feed      easymesh-pin-2026-08-04  → 19507bd73
-  easymesh-shared  easymesh-2026-08-04      → 9b33a6e
+TAGY (pushnuté) — ČTYŘI REPA, OBNOVÍ DNEŠEK KOMPLETNĚ:
+  iopsys-feed      easymesh-pin-2026-08-04            → 19507bd73   patche
+  easymesh-shared  easymesh-2026-08-04                → 6d77ae0     skripty + dokumenty
+  universal-new    easymesh-2026-08-04-universal-new  → 684768b     builder + defconfig
+  x8-new           easymesh-2026-08-04-x8-new         → 66a3332     builder + defconfig
 
 BUNDLY: VM /home/ipsec/git-backups-2026-08-04/
   iopsys-feed-devel-20260804.bundle    (59 MB)
@@ -61,6 +63,23 @@ BUNDLY: VM /home/ipsec/git-backups-2026-08-04/
 obnoví obojí: co se postavilo **i proč**, včetně měřicích pastí.
 Ověřeno obsahem tagu: `evsrc-check` v tagu má md5 `c2880c08da`, **shodné s tím,
 co běží na uzlech**.
+
+⚠️ **Buildery byly do 4. 8. večer necommitnuté** a našlo se to až na Petrův dotaz
+„jsou buildery taky na gitu?". Chybělo v gitu přesně to, co určuje, co se
+postaví:
+```
+MTK_COMMIT   90323e273792 -> 3a4e2a2511af       (pin MTK feedu)
+defconfig    + CONFIG_IEEE1905_CMDU_SA_IS_ALMAC=y
+```
+Bez toho by dnešní obrazy **nešly z gitu postavit znovu**. Teď commitnuto,
+pushnuto a otagováno v obou builder repech.
+
+**Zbývá tam necommitnuté (záměrně, je to mrtvé dřevo):**
+`my_files/etc-files/www-cgi/mesh-status` v `universal-new` i `x8-new` — kopie
+z 2. 8., kterou **žádný builder nepoužívá** (`common-easymesh.sh` bere výhradně
+`easymesh-shared/my_files-easymesh`). A `configs/*.pred-almac` jsou zálohy
+z doby před změnou ALMAC. Commitovat zastaralá data by jen zaneslo repo —
+buď smazat, nebo nechat být.
 
 ⚠️ `easymesh-shared` **do včerejška neměl tagy vůbec** a feed měl poslední
 z 3. 8. Od teď tagovat po každém posunu pinu — je to poslední článek receptu
