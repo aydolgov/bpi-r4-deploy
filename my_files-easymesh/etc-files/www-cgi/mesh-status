@@ -151,9 +151,22 @@ echo "onboarded here. Run <code>mesh-env</code> on each node for the real answer
 #     the page said "5 client device(s)" when two were present, one of them a
 #     ghost. affiliated_sta maps every link address to its MLD, so a row that
 #     appears there is a leg, not a device, and is folded away here.
+#   * The count came from `sta` alone, so it counted rows this page folds away
+#     and missed the live client entirely - on 2026-08-03 it said 4 while one
+#     phone was connected, because that phone is known only to sta_mld. Both
+#     loops below now count what they actually print.
+#   * A row with no timestamp cannot be shown as connected, and iOS mints a new
+#     address on every join, so the list grew by one dead row per roam. They are
+#     folded into a single line - with their addresses still on it, because a
+#     row this page cannot verify is not the same as a row worth hiding.
 echo "<h2>Clients &mdash; who is connected where</h2>"
+STADIR=/tmp/mesh-status.$$
+mkdir -p "$STADIR"; : > "$STADIR/live"; : > "$STADIR/dead"
+trap 'rm -rf "$STADIR"' EXIT
 NSTA=$(q "SELECT count(*) FROM sta WHERE COALESCE(is_bsta,0)=0
                   AND macaddr NOT IN (SELECT macaddr FROM affiliated_sta)")
+NSTA=$(( ${NSTA:-0} + $(q "SELECT count(*) FROM sta_mld
+                            WHERE mld_macaddr NOT IN (SELECT macaddr FROM sta)") ))
 if [ "${NSTA:-0}" = "0" ]; then
 	echo "<p class=note>No client devices. Backhaul links are listed separately below.</p>"
 else
@@ -188,29 +201,29 @@ else
 
 		# sta keeps clients for stale_sta_timeout, which is 20 days here, so
 		# "connected" alone says nothing about now. Age comes from sta_mld,
-		# the only client row carrying a timestamp.
+		# the only client row carrying a timestamp. Without one there is
+		# nothing to show but a claim, so fold the row away instead.
 		if [ -z "$age" ]; then
-			agetxt='<span class=na>&mdash;</span>'
-		elif [ "$age" -lt 90 ] 2>/dev/null; then
+			printf '%s\n' "$name" >> "$STADIR/dead"
+			continue
+		fi
+		if [ "$age" -lt 90 ] 2>/dev/null; then
 			agetxt="<span class=ok>${age}s</span>"
 		else
 			agetxt="<span class=warn>${age}s</span>"
 		fi
 
+		# The "unverified" state that used to live here is gone: a row with no
+		# timestamp is now folded away above rather than printed with a caveat,
+		# so everything reaching this point has an age to judge it by.
 		state=$([ "$assoc" = "1" ] && echo '<span class=ok>connected</span>' || echo 'left')
-		if [ "$assoc" = "1" ] && [ -z "$age" ]; then
-			# No sta_mld row means no record here carries a timestamp, so
-			# "connected" is a claim this page cannot support. Measured
-			# 2026-08-03: a ghost left over from an earlier client still read
-			# connected on a full MLO band list, indistinguishable from the
-			# phone that was actually there.
-			state='<span class=warn>unverified</span>'
-		elif [ "$assoc" = "1" ] && [ -n "$age" ] && [ "$age" -ge 300 ] 2>/dev/null; then
+		if [ "$assoc" = "1" ] && [ "$age" -ge 300 ] 2>/dev/null; then
 			state='<span class=warn>stale</span>'
 		fi
 
 		printf '<tr><td>%s<td>%s<td>%s<td>%s<td class=num>%s</tr>\n' \
 			"<span class=dev>$name</span>" "$where" "$bandtxt" "$state" "$agetxt"
+		printf '%s\n' "$name" >> "$STADIR/live"
 	done
 
 	# An MLO client can be known to sta_mld and absent from sta - they are
@@ -224,8 +237,10 @@ else
 	while IFS='|' read -r mac age owner nsta; do
 		[ -n "$mac" ] || continue
 		if [ -z "$age" ]; then
-			agetxt='<span class=na>&mdash;</span>'
-		elif [ "$age" -lt 90 ] 2>/dev/null; then
+			printf '%s\n' "$mac" >> "$STADIR/dead"
+			continue
+		fi
+		if [ "$age" -lt 90 ] 2>/dev/null; then
 			agetxt="<span class=ok>${age}s</span>"
 		else
 			agetxt="<span class=warn>${age}s</span>"
@@ -235,10 +250,21 @@ else
 			"$(node_name "$owner")" \
 			"<span class=ok>MLO</span> &middot; $(dash "$nsta") link(s)" \
 			"<span class=warn>MLD only</span>" "$agetxt"
+		printf '%s\n' "$mac" >> "$STADIR/live"
 	done
+
+	# One line for everything with no timestamp, addresses included. Before
+	# this, each iOS address rotation left another row that read "connected"
+	# and the list only ever grew.
+	NDEAD=$(wc -l < "$STADIR/dead" 2>/dev/null | tr -d ' ')
+	if [ "${NDEAD:-0}" -gt 0 ] 2>/dev/null; then
+		printf '<tr><td colspan=5><span class=warn>%s record(s) with no timestamp</span> <span class="sub mac">%s</span></td></tr>\n' \
+			"$NDEAD" "$(tr '\n' ' ' < "$STADIR/dead")"
+	fi
 	echo "</table>"
 fi
-printf '<p class=note>%s client device(s). Names come from DHCP; unknown ones show their MAC. &quot;last heard&quot; is the age of the sta_mld row - the only client record with a timestamp; a dash means this client has no MLD row at all, so its age is unknown and &quot;connected&quot; is unverifiable. Anything older than 300 s is shown as stale rather than connected: sta keeps departed clients for 20 days by design.</p>\n' "${NSTA:-0}"
+NLIVE=$(wc -l < "$STADIR/live" 2>/dev/null | tr -d ' ')
+printf '<p class=note>%s client device(s) with a timestamp, %s folded away without one. Names come from DHCP; unknown ones show their MAC. &quot;last heard&quot; is the age of the sta_mld row - the only client record that carries a time. A row without one cannot be shown as connected, so it is folded into the last line instead of claiming a state this page cannot check. Anything older than 300 s is shown as stale rather than connected: sta keeps departed clients for 20 days by design.</p>\n' "${NLIVE:-0}" "${NDEAD:-0}"
 
 # --------------------------------------------------------------- backhaul
 # Node-to-node links, from topology_link rather than from `sta`.
@@ -304,14 +330,32 @@ done
 echo "</table>"
 
 # --------------------------------------------------------------------- MLD
-echo "<h2>AP-MLD (Wi-Fi 7 fronthaul)</h2><table><tr><th>node<th>SSID<th>enabled<th>affiliated links<th>TTLM rows</tr>"
+# The heading used to say "fronthaul", but half these rows are the backhaul MLD
+# (SSID MAP--BH) - and that one is the interesting one here, because a node with
+# both rows is a node carrying mesh traffic over Wi-Fi 7 rather than a single
+# link. Role is taken from bss.is_fbss/is_bbss of the affiliated links rather
+# than from the SSID string, so a renamed backhaul SSID does not mislabel it.
+echo "<h2>AP-MLD (Wi-Fi 7)</h2><table><tr><th>node<th>SSID<th>role<th>enabled<th>affiliated links<th>TTLM rows</tr>"
 q "SELECT m.agent_almac, m.ssid, m.enabled,
           (SELECT count(*) FROM affiliated_ap f WHERE f.mld_macaddr=m.mld_macaddr),
-          (SELECT count(*) FROM ttlm t WHERE t.mld_macaddr=m.mld_macaddr)
-   FROM apmld m ORDER BY m.agent_almac" |
-while IFS='|' read -r agent ssid en aps ttlm; do
-	printf '<tr><td>%s<td>%s<td>%s<td class=num>%s<td class=num>%s</tr>\n' \
-		"$(node_name "$agent")" "$(dash "$ssid")" "$(yn "$en")" "$(dash "$aps")" "$(dash "$ttlm")"
+          (SELECT count(*) FROM ttlm t WHERE t.mld_macaddr=m.mld_macaddr),
+          (SELECT CASE WHEN max(b.is_bbss)=1 AND max(b.is_fbss)=1 THEN 'both'
+                       WHEN max(b.is_bbss)=1 THEN 'backhaul'
+                       WHEN max(b.is_fbss)=1 THEN 'fronthaul'
+                       ELSE '' END
+             FROM affiliated_ap f JOIN bss b ON b.bssid=f.bssid
+            WHERE f.mld_macaddr=m.mld_macaddr)
+   FROM apmld m ORDER BY m.agent_almac, m.ssid" |
+while IFS='|' read -r agent ssid en aps ttlm role; do
+	case "$role" in
+		backhaul)  roletxt='<span class=ok>backhaul</span>' ;;
+		fronthaul) roletxt='fronthaul' ;;
+		both)      roletxt='<span class=warn>both</span>' ;;
+		*)         roletxt=$(dash "") ;;
+	esac
+	printf '<tr><td>%s<td>%s<td>%s<td>%s<td class=num>%s<td class=num>%s</tr>\n' \
+		"$(node_name "$agent")" "$(dash "$ssid")" "$roletxt" \
+		"$(yn "$en")" "$(dash "$aps")" "$(dash "$ttlm")"
 done
 echo "</table>"
 

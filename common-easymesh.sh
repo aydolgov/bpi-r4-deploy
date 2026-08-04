@@ -177,6 +177,9 @@ easymesh_install_mld_scripts() {
 	\cp "$E/uci-defaults/94-easymesh-drop-phantom-bsta" files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/94-easymesh-drop-phantom-bsta
 
 	# mapc.db keep pres sysupgrade (deterministic recovery vrstva)
+	# Sberac logu zapnout pri bootu - init skript se dosud spoustel jen rucne
+	# a /etc/rc.d flash neprezije, takze roura /tmp/mapagent.log zustavala bez ctenare.
+	\cp "$E/uci-defaults/92-log-collect-enable" files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/92-log-collect-enable
 	\cp "$E/uci-defaults/97-mapc-db-keep" files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/97-mapc-db-keep
 
 	# Fail-safe: uzel nerozdava DHCP, dokud to node-config.sh vyslovne nedovoli.
@@ -201,14 +204,14 @@ easymesh_install_mld_scripts() {
 # na disku VM1. Od 25. 7. je zrcadleno:
 #
 #   remote woziwrt = https://github.com/woziwrt/iopsys-feed.git  (private)
-#   branch devel, tag easymesh-pin-2026-07-30d -> 7d269ebb5
+#   branch devel, tag easymesh-pin-2026-08-03i -> da662b4fc
 #
 # Pri obnove na cistem stroji klonovat odtud, ne z upstreamu - upstream nase
 # patche nema. Po zmene ve feedu: commit + `git push woziwrt devel` + posunout
 # pin nize, jinak `git reset --hard` v teto funkci tu zmenu pri buildu zahodi.
 easymesh_setup_iopsys_feed() {
 	# pin na týž commit jako original builder (L152), fallback HEAD
-	( cd "${EASYMESH_SHARED}/iopsys-feed" && git reset --hard 7d269ebb5 && git clean -fd ) 2>/dev/null || \
+	( cd "${EASYMESH_SHARED}/iopsys-feed" && git reset --hard c47e0b893 && git clean -fd ) 2>/dev/null || \
 	( cd "${EASYMESH_SHARED}/iopsys-feed" && git reset --hard HEAD && git clean -fd ) 2>/dev/null || true
 	grep -q "src-link iopsys" feeds.conf.default || \
 		echo "src-link iopsys ${EASYMESH_SHARED}/iopsys-feed" >> feeds.conf.default
