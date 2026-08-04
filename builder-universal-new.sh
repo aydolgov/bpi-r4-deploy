@@ -17,7 +17,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EASYMESH_SHARED="${EASYMESH_SHARED:-${REPO_DIR}/../easymesh-shared}"
 AUTOBUILD_TARGET="filogic-mac80211-mt798x_rfb-wifi7_nic"
 OPENWRT_COMMIT="${OPENWRT_COMMIT:-4d0fec5a4845ba166203a782d08217b3f1cf2af9}"
-MTK_COMMIT="${MTK_COMMIT:-90323e273792e376b4713f4f5761d732df6dafab}"
+MTK_COMMIT="${MTK_COMMIT:-3a4e2a2511af93cea1ca43205a02362423882b7c}"
 
 # shellcheck source=common-easymesh.sh
 . "${EASYMESH_SHARED}/common-easymesh.sh"
