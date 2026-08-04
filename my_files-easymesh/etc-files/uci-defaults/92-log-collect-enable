@@ -1,0 +1,12 @@
+#!/bin/sh
+# Turn the log collector on at boot.
+#
+# The init script itself has shipped since 2026-07-31 but nothing ever created
+# the rc.d symlink, so it only ever ran when somebody started it by hand - and
+# a sysupgrade does not carry /etc/rc.d over. The visible symptom is subtle:
+# /tmp/mapagent.log exists as a FIFO (the daemon creates it) with no reader, so
+# every log line the agent writes is discarded. Measured 2026-08-02 on bpi-8g,
+# where a whole day of agent-side diagnosis had to be done blind while bpi-4g,
+# which happened to have a reader started by hand, was fully readable.
+[ -x /etc/init.d/log-collect ] && /etc/init.d/log-collect enable
+exit 0
