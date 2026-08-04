@@ -271,17 +271,28 @@ else
 	   ORDER BY m.mld_macaddr" |
 	while IFS='|' read -r mac age owner nsta; do
 		[ -n "$mac" ] || continue
-		# An MLD record with no time, or one that has not been heard from in
-		# five minutes, is a client that left - iOS rotates its address on
-		# every join, so these accumulate. Fold them with the rest.
-		if [ -z "$age" ] || [ "$age" -ge 300 ] 2>/dev/null; then
+		# Fold only what is almost certainly gone. A record a few minutes old
+		# is ambiguous - the client may have roamed and the controller not
+		# noticed yet, which on 2026-08-04 took over five minutes. Hiding it
+		# is worse than admitting the uncertainty: the row below says "stale"
+		# and shows the age, so it is visible that we are unsure rather than
+		# silently one client short. iOS rotates its address on every join,
+		# so genuinely departed records still pile up - they fold at 15 min.
+		if [ -z "$age" ] || [ "$age" -ge 900 ] 2>/dev/null; then
 			printf '%s\n' "$mac" >> "$STADIR/dead"
 			continue
 		fi
+		# The same staleness rule the sta rows get. It was missing here, so a
+		# record three and a half minutes old still read "connected" - and on
+		# 2026-08-04 it said so while the client had been on another node for
+		# five minutes. The row was not wrong about what the database holds;
+		# it was wrong to present it as the present tense.
 		if [ "$age" -lt 90 ] 2>/dev/null; then
 			agetxt="<span class=ok>${age}s</span>"
+			mldstate="<span class=ok>connected</span>"
 		else
 			agetxt="<span class=warn>${age}s</span>"
+			mldstate="<span class=warn>stale</span>"
 		fi
 		# This used to say "MLD only", which describes the shape of our data,
 		# not the state of the client. A row that got here has been heard
@@ -292,7 +303,7 @@ else
 			"<span class=dev><span class=mac>$mac</span></span>" \
 			"$(node_name "$owner")" \
 			"<span class=ok>MLO</span> &middot; $(dash "$nsta") link(s)" \
-			"<span class=ok>connected</span> <span class=sub>MLD row only</span>" "$agetxt"
+			"$mldstate <span class=sub>MLD row only</span>" "$agetxt"
 		printf '%s\n' "$mac" >> "$STADIR/live"
 	done
 
@@ -307,7 +318,7 @@ else
 	echo "</table>"
 fi
 NLIVE=$(wc -l < "$STADIR/live" 2>/dev/null | tr -d ' ')
-printf '<p class=note>%s client device(s) the controller has evidence for, %s departed record(s) folded into the last row. Names come from DHCP; unknown ones show their MAC. Evidence is a sta_mld timestamp (&quot;last heard&quot;) or a non-zero conn_time, which the controller fills only once an agent reports the client - a non-MLO client has no MLD row and is judged on conn_time alone. Rows with neither, and MLD records not heard from in 300 s, are folded away rather than shown as connected: sta keeps departed clients for 20 days by design.</p>\n' "${NLIVE:-0}" "${NDEAD:-0}"
+printf '<p class=note>%s client device(s) the controller has evidence for, %s departed record(s) folded into the last row. Names come from DHCP; unknown ones show their MAC. Evidence is a sta_mld timestamp (&quot;last heard&quot;) or a non-zero conn_time, which the controller fills only once an agent reports the client - a non-MLO client has no MLD row and is judged on conn_time alone. Rows with neither, and MLD records older than 15 min, are folded away; a record between 90 s and 15 min is shown as stale with its age, because a client that roamed may simply not have been noticed yet rather than shown as connected: sta keeps departed clients for 20 days by design.</p>\n' "${NLIVE:-0}" "${NDEAD:-0}"
 
 # --------------------------------------------------------------- backhaul
 # Node-to-node links, from topology_link rather than from `sta`.
