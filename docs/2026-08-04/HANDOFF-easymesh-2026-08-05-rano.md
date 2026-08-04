@@ -45,17 +45,22 @@ ls -l /proc/$P/fd | grep -c socket        # < 8 == ŠPATNĚ
 
 ```
 iopsys-feed      19507bd73   vetev devel           → woziwrt/devel   ✅
-easymesh-shared  7f048a7     vetev easymesh-shared → origin          ✅
+easymesh-shared  9b33a6e     vetev easymesh-shared → origin          ✅
 pin v common-easymesh.sh: 19507bd73                                  ✅
 
-TAGY (pushnuté):
+TAGY (pushnuté) — OBSAHUJÍ VŠE VČETNĚ TĚCHTO DOKUMENTŮ:
   iopsys-feed      easymesh-pin-2026-08-04  → 19507bd73
-  easymesh-shared  easymesh-2026-08-04      → 7f048a7
+  easymesh-shared  easymesh-2026-08-04      → 9b33a6e
 
 BUNDLY: VM /home/ipsec/git-backups-2026-08-04/
   iopsys-feed-devel-20260804.bundle    (59 MB)
-  easymesh-shared-20260804.bundle      (256 kB)
+  easymesh-shared-20260804.bundle
 ```
+
+**Dokumenty jsou nově v gitu** — `easymesh-shared/docs/2026-08-04/`. Tag tedy
+obnoví obojí: co se postavilo **i proč**, včetně měřicích pastí.
+Ověřeno obsahem tagu: `evsrc-check` v tagu má md5 `c2880c08da`, **shodné s tím,
+co běží na uzlech**.
 
 ⚠️ `easymesh-shared` **do včerejška neměl tagy vůbec** a feed měl poslední
 z 3. 8. Od teď tagovat po každém posunu pinu — je to poslední článek receptu
