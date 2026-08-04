@@ -1,0 +1,39 @@
+#!/bin/sh
+# Keep mlo-steerd installed, but do not let it start on its own.
+#
+# It is a second, independent steering brain running next to the EasyMesh
+# controller, and on 2026-08-04 it was measured overwriting the controller's
+# decisions in a way that takes a client off the air entirely:
+#
+#   attlm_set() { hostapd_cli -i ap-mld-1 set_attlm disabled_links=$mask ... }
+#
+# The mask is DISABLED links, the decision comes from min_rssi() - the minimum
+# over ALL stations - and A-TTLM is advertised, so it applies to the whole
+# AP-MLD. One client walking into the next room therefore disables a band for
+# every client on that node, including the ones sitting next to the antenna.
+# Measured masks: 4 on bpi-4g (6 GHz off), 6 on bpi-8g (5 and 6 GHz off, only
+# 2.4 GHz left). The client stays associated and its TIDs are mapped to links
+# it may not use - "connected, no internet". Stopping the daemon brought the
+# connection back with nobody touching the phone.
+#
+# The daemon is NOT removed. Neg-TTLM and the R-TWT groups in it are real work
+# we want back; what has to change is doing per-STA policy with a per-BSS
+# mechanism. Until that is rewritten it must not run unattended.
+#
+# An init script cannot be disabled by leaving its rc.d symlink out of the
+# image: OpenWrt enables every /etc/init.d/* that carries a START= line when it
+# builds the rootfs, so the symlink is recreated. It has to be disabled here,
+# after the image is on the device.
+#
+# To run it again:  /etc/init.d/mlo-steerd enable && /etc/init.d/mlo-steerd start
+# and remember to stop it before measuring anything about EasyMesh behaviour,
+# otherwise the measurement is against somebody else's decisions.
+
+[ -x /etc/init.d/mlo-steerd ] || exit 0
+
+/etc/init.d/mlo-steerd disable 2>/dev/null
+/etc/init.d/mlo-steerd stop 2>/dev/null
+
+logger -t mlo-steerd-off "mlo-steerd left installed but disabled (A-TTLM disables a band for every client on the node)"
+
+exit 0

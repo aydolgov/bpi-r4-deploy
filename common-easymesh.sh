@@ -197,6 +197,16 @@ easymesh_install_mld_scripts() {
 	# Sberac logu zapnout pri bootu - init skript se dosud spoustel jen rucne
 	# a /etc/rc.d flash neprezije, takze roura /tmp/mapagent.log zustavala bez ctenare.
 	\cp "$E/uci-defaults/92-log-collect-enable" files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/92-log-collect-enable
+
+	# 91-mlo-steerd-off: mlo-steerd zustava v obrazu, ale nespousti se sam.
+	# Je to druhy, nezavisly steering mozek vedle EasyMesh controlleru a 4.8.
+	# bylo zmereno, jak klienta uplne odstavi: set_attlm disabled_links, kde
+	# rozhoduje min_rssi() pres VSECHNY stanice a A-TTLM plati celemu AP-MLD.
+	# Jeden klient v druhem pokoji tak vypne pasmo i tem u anteny (maska 4 na
+	# 4g, 6 na 8g) - klient zustane asociovany a data neteci.
+	# Vynechat rc.d symlink NESTACI: OpenWrt povoli kazdy init.d s START=
+	# pri stavbe rootfs, takze se musi zakazat az na zarizeni.
+	\cp "$E/uci-defaults/91-mlo-steerd-off" files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/91-mlo-steerd-off
 	\cp "$E/uci-defaults/97-mapc-db-keep" files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/97-mapc-db-keep
 
 	# Fail-safe: uzel nerozdava DHCP, dokud to node-config.sh vyslovne nedovoli.
