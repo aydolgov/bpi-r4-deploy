@@ -94,7 +94,15 @@ easymesh_install_mld_scripts() {
 	# asociuje v 36.9 s. Neni to vada - AP dodrzuje predpisy; hlidac jen
 	# pocka a reasociuje. 5GHz fronthaul ceka na tentyz CAC, takze zpozdeni
 	# nic nezhorsuje.
-	for s in mld-link-check:S98 mld-config-check:S96 mld-report-check:S99 boot-census:S99 node-heartbeat:S99 mld-bsta-relink:S99; do
+	# wnm-enable:S19 bezi PRED netifd (S20), takze `option bss_transition 1`
+	# je v /etc/config/wireless drive, nez se z nej konfiguruje hostapd.
+	# Bez te volby hostapd KAZDOU BTM odpoved zahodi (`Ignore BSS Transition
+	# Management Response ... since BSS Transition Management is disabled`,
+	# namereno 4.8. na 4g) - proto btm_success zustaval 0, i kdyz steering
+	# prokazatelne funguje. Poradi je zamerne: pozdejsi zapis by vyzadoval
+	# `wifi reload`, coz je na MT7996 pri formovani meshe to nejhorsi, co
+	# muzeme udelat.
+	for s in wnm-enable:S19 mld-link-check:S98 mld-config-check:S96 mld-report-check:S99 boot-census:S99 node-heartbeat:S99 mld-bsta-relink:S99; do
 		local name="${s%%:*}" rc="${s##*:}"
 		\cp "$E/usr-sbin/$name" "files/usr/sbin/$name";  chmod +x "files/usr/sbin/$name"
 		\cp "$E/init.d/$name"   "files/etc/init.d/$name"; chmod +x "files/etc/init.d/$name"

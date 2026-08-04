@@ -1,0 +1,20 @@
+#!/bin/sh /etc/rc.common
+
+# Runs before netifd starts wifi (S20), so `option bss_transition 1` is already
+# in /etc/config/wireless when hostapd is configured from it. Ordering is the
+# whole point: doing this later would mean a `wifi reload` to take effect, and
+# on MT7996 a reload during mesh formation is the most disruptive thing we can
+# do. See /usr/sbin/wnm-enable for the measurement this recovers.
+#
+# Synchronous, like mld-config-check: it must finish before the next init
+# script runs. It is a no-op on every boot after the first, so it costs nothing.
+
+START=19
+
+start() {
+	/usr/sbin/wnm-enable >/dev/null 2>&1
+}
+
+stop() {
+	return 0
+}
