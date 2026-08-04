@@ -111,7 +111,14 @@ easymesh_install_mld_scripts() {
 	# rodicovsky socket, a na ten hostapd nic neposila (asociace chodi na
 	# ap-mld-1_linkN, zmereno 4.8.). Pri jedne polozce na cely MLD se tedy
 	# nedrenuje nic. HW overeno na x8: tri wifi.sta na tri nohy MLO.
-	for s in wifi-evmap:S94 wnm-enable:S19 mld-link-check:S98 mld-config-check:S96 mld-report-check:S99 boot-census:S99 node-heartbeat:S99 mld-bsta-relink:S99; do
+	# evsrc-check:S99 overuje, ze se wifimngr na hostapd opravdu PRIPOJIL.
+	# Startuje na S95 a cte evmap driv, nez existuji linkove ctrl sokety -
+	# samotne 5 GHz ceka 60 s na DFS CAC. libwifi takovy zdroj registruje
+	# DORMANT s fd_monitor=0, takze wifimngr pro nej neprida uloop fd, nic ho
+	# nepolluje a uz nikdy se nepripoji. Zmereno na x8 po studenem startu:
+	# wifimngr v 42 s, sokety v 86-93 s -> 1 socket misto 13 a vsichni
+	# producenti udalosti jsou mrtvy kod, TISE (evmap se otevrel v poradku).
+	for s in evsrc-check:S99 wifi-evmap:S94 wnm-enable:S19 mld-link-check:S98 mld-config-check:S96 mld-report-check:S99 boot-census:S99 node-heartbeat:S99 mld-bsta-relink:S99; do
 		local name="${s%%:*}" rc="${s##*:}"
 		\cp "$E/usr-sbin/$name" "files/usr/sbin/$name";  chmod +x "files/usr/sbin/$name"
 		\cp "$E/init.d/$name"   "files/etc/init.d/$name"; chmod +x "files/etc/init.d/$name"

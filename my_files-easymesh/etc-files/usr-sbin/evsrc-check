@@ -1,0 +1,80 @@
+#!/bin/sh
+# Make sure wifimngr actually ATTACHED to hostapd, not just tried.
+#
+# wifimngr starts at S95 and reads /etc/wifi.json there, but hostapd's per-link
+# control sockets do not exist yet at that point. Measured on bpi-x8 after a
+# cold boot, 2026-08-04:
+#
+#   wifimngr started            ~42 s after boot
+#   ap-mld-1_linkN sockets       ~86-93 s after boot
+#
+# and 5 GHz waits out a 60 s DFS CAC before its link even appears, so this is
+# what a normal boot looks like, not an unlucky one.
+#
+# libwifi registers such a source DORMANT: hapdctrl_register_event() leaves
+# req->fd_monitor at 0 when no socket could be opened, so wifimngr adds no uloop
+# fd for it. The comment there says the source "re-attaches on the next
+# recv/register attempt" - but with no fd being polled there is no next attempt.
+# The source stays dormant forever, silently. wifimngr then holds exactly one
+# socket, its ubus connection, and every libwifi event producer is dead code:
+# no ubus wifi.sta, so map-agent is back to discovering clients by polling,
+# minutes late. Nothing logs an error - the evmap opened fine.
+#
+# So: wait until hostapd's sockets are all there, then check whether wifimngr
+# is holding any of them, and restart it once if it is not. A restart is cheap
+# here (hostapd and the radios are untouched; only wifimngr re-registers) and it
+# happens at most once per boot.
+#
+# Runs detached from S99 so it cannot hold up the rest of the boot while it
+# waits out the CAC.
+#
+# To disable: remove /etc/rc.d/S99evsrc-check. Everything reverts to polling.
+
+WAIT_MAX=300		# > DFS CAC (60 s) with a wide margin for 6 GHz
+STEP=5
+LOG_TAG=evsrc-check
+
+want=$(jsonfilter -i /etc/wifi.json -e '@.events[*].ifname' 2>/dev/null | wc -l)
+if [ "${want:-0}" -eq 0 ]; then
+	logger -t "$LOG_TAG" "no event map, nothing to verify"
+	exit 0
+fi
+
+# Wait for hostapd to publish as many control sockets as the map asks for.
+waited=0
+while [ "$waited" -lt "$WAIT_MAX" ]; do
+	have=$(ls /var/run/hostapd/ 2>/dev/null | grep -vc '^global$')
+	[ "${have:-0}" -ge "$want" ] && break
+	sleep "$STEP"
+	waited=$((waited + STEP))
+done
+
+have=$(ls /var/run/hostapd/ 2>/dev/null | grep -vc '^global$')
+if [ "${have:-0}" -lt "$want" ]; then
+	# Fewer BSSes than configured is a different problem (a link that never
+	# came up) and belongs to mld-link-check. Carry on with what exists.
+	logger -t "$LOG_TAG" "only $have of $want hostapd sockets after ${waited}s; checking anyway"
+fi
+
+pid=$(ps w | grep '[/]usr/sbin/wifimngr' | awk '{print $1}' | head -1)
+if [ -z "$pid" ]; then
+	logger -t "$LOG_TAG" "wifimngr is not running"
+	exit 0
+fi
+
+# Each registered source holds at least one socket, on top of wifimngr's own
+# ubus connection. A source-less wifimngr sits at exactly one.
+socks=$(ls -l "/proc/$pid/fd" 2>/dev/null | grep -c socket)
+
+if [ "${socks:-0}" -gt "$want" ]; then
+	exit 0
+fi
+
+logger -t "$LOG_TAG" "wifimngr holds $socks socket(s) for $want event source(s) after ${waited}s - registered before hostapd was up; restarting it"
+
+/etc/init.d/wifimngr restart >/dev/null 2>&1
+sleep 5
+
+pid=$(ps w | grep '[/]usr/sbin/wifimngr' | awk '{print $1}' | head -1)
+socks=$(ls -l "/proc/$pid/fd" 2>/dev/null | grep -c socket)
+logger -t "$LOG_TAG" "after restart: $socks socket(s) for $want source(s)"
