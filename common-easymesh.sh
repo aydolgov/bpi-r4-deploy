@@ -245,7 +245,7 @@ easymesh_install_mld_scripts() {
 # pin nize, jinak `git reset --hard` v teto funkci tu zmenu pri buildu zahodi.
 easymesh_setup_iopsys_feed() {
 	# pin na týž commit jako original builder (L152), fallback HEAD
-	( cd "${EASYMESH_SHARED}/iopsys-feed" && git reset --hard 3c68d01a8 && git clean -fd ) 2>/dev/null || \
+	( cd "${EASYMESH_SHARED}/iopsys-feed" && git reset --hard 19507bd73 && git clean -fd ) 2>/dev/null || \
 	( cd "${EASYMESH_SHARED}/iopsys-feed" && git reset --hard HEAD && git clean -fd ) 2>/dev/null || true
 	grep -q "src-link iopsys" feeds.conf.default || \
 		echo "src-link iopsys ${EASYMESH_SHARED}/iopsys-feed" >> feeds.conf.default
