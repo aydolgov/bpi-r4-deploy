@@ -173,6 +173,7 @@ else
 	echo "<table class=big><tr><th>device<th>connected to<th>band<th>state<th>last heard</tr>"
 	q "SELECT COALESCE(NULLIF(s.hostname,''), s.macaddr), s.agent_almac, s.associated,
 	          (SELECT count(*) FROM apmld m WHERE m.mld_macaddr = s.bssid),
+	          COALESCE(s.conn_time,0),
 	          (SELECT group_concat(DISTINCT r.band) FROM affiliated_ap a
 	             JOIN radio r ON r.ruid = a.ruid WHERE a.mld_macaddr = s.bssid),
 	          (SELECT r.band FROM bss b JOIN radio r ON r.ruid=b.ruid WHERE b.bssid=s.bssid LIMIT 1),
@@ -183,9 +184,17 @@ else
 	   FROM sta s WHERE COALESCE(s.is_bsta,0)=0
 	     AND s.macaddr NOT IN (SELECT macaddr FROM affiliated_sta)
 	   ORDER BY s.hostname, s.macaddr" |
-	while IFS='|' read -r name agent assoc ismld mldbands band age mldagent; do
-		if [ "${ismld:-0}" != "0" ] && [ -n "$mldbands" ]; then
+	while IFS='|' read -r name agent assoc ismld conn mldbands band age mldagent; do
+		# A client sitting on an MLD's primary link has that MLD's address as
+		# its BSSID, so "the BSSID is an AP-MLD" does not make it an MLO
+		# client. Measured 2026-08-04: b8:09:8a:50:f2:2a reported
+		# mlo_capable false on a single link and this page still called it
+		# MLO. Only a sta_mld row - which is also what "last heard" comes
+		# from - says the client really has more than one leg.
+		if [ "${ismld:-0}" != "0" ] && [ -n "$mldbands" ] && [ -n "$age" ]; then
 			bandtxt="<span class=ok>MLO</span> &middot; $(bands_name "$mldbands")"
+		elif [ "${ismld:-0}" != "0" ] && [ -n "$mldbands" ]; then
+			bandtxt="$(bands_name "$mldbands") <span class=sub>on AP-MLD</span>"
 		else
 			bandtxt=$(band_name "$band")
 		fi
@@ -200,26 +209,37 @@ else
 		fi
 
 		# sta keeps clients for stale_sta_timeout, which is 20 days here, so
-		# "connected" alone says nothing about now. Age comes from sta_mld,
-		# the only client row carrying a timestamp. Without one there is
-		# nothing to show but a claim, so fold the row away instead.
-		if [ -z "$age" ]; then
+		# "connected" alone says nothing about now. Two things can support it:
+		# a sta_mld timestamp, or conn_time - which the controller only fills
+		# once an agent has actually reported the client. Measured 2026-08-04:
+		#
+		#   b8:09:8a:50:f2:2a  conn_time 586  rcpi 138  pkts_rx 5820   <- live
+		#   1a:37:b1:44:c0:70  conn_time   0  rcpi   0  pkts_rx    0   <- ghost
+		#
+		# Judging on sta_mld alone was wrong in both directions: it folded away
+		# a non-MLO client that was demonstrably connected (it has no MLD row
+		# and never will) and it promoted a ten-hour-old MLD record as the one
+		# device with evidence behind it.
+		if [ -z "$age" ] && [ "${conn:-0}" -le 0 ] 2>/dev/null; then
 			printf '%s\n' "$name" >> "$STADIR/dead"
 			continue
 		fi
-		if [ "$age" -lt 90 ] 2>/dev/null; then
+		if [ -z "$age" ]; then
+			agetxt='<span class=na>&mdash;</span>'
+		elif [ "$age" -lt 90 ] 2>/dev/null; then
 			agetxt="<span class=ok>${age}s</span>"
 		else
 			agetxt="<span class=warn>${age}s</span>"
 		fi
 
-		# The "unverified" state that used to live here is gone: a row with no
-		# timestamp is now folded away above rather than printed with a caveat,
-		# so everything reaching this point has an age to judge it by.
+		# The "unverified" state that used to live here is gone: a row with
+		# nothing behind it is folded away above rather than printed with a
+		# caveat, so everything here has either an age or a conn_time.
 		state=$([ "$assoc" = "1" ] && echo '<span class=ok>connected</span>' || echo 'left')
-		if [ "$assoc" = "1" ] && [ "$age" -ge 300 ] 2>/dev/null; then
+		if [ "$assoc" = "1" ] && [ -n "$age" ] && [ "$age" -ge 300 ] 2>/dev/null; then
 			state='<span class=warn>stale</span>'
 		fi
+		[ "${conn:-0}" -gt 0 ] 2>/dev/null && state="$state <span class=sub>${conn}s</span>"
 
 		printf '<tr><td>%s<td>%s<td>%s<td>%s<td class=num>%s</tr>\n' \
 			"<span class=dev>$name</span>" "$where" "$bandtxt" "$state" "$agetxt"
@@ -236,7 +256,10 @@ else
 	   ORDER BY m.mld_macaddr" |
 	while IFS='|' read -r mac age owner nsta; do
 		[ -n "$mac" ] || continue
-		if [ -z "$age" ]; then
+		# An MLD record with no time, or one that has not been heard from in
+		# five minutes, is a client that left - iOS rotates its address on
+		# every join, so these accumulate. Fold them with the rest.
+		if [ -z "$age" ] || [ "$age" -ge 300 ] 2>/dev/null; then
 			printf '%s\n' "$mac" >> "$STADIR/dead"
 			continue
 		fi
@@ -258,13 +281,13 @@ else
 	# and the list only ever grew.
 	NDEAD=$(wc -l < "$STADIR/dead" 2>/dev/null | tr -d ' ')
 	if [ "${NDEAD:-0}" -gt 0 ] 2>/dev/null; then
-		printf '<tr><td colspan=5><span class=warn>%s record(s) with no timestamp</span> <span class="sub mac">%s</span></td></tr>\n' \
+		printf '<tr><td colspan=5><span class=warn>%s departed record(s)</span> <span class="sub mac">%s</span></td></tr>\n' \
 			"$NDEAD" "$(tr '\n' ' ' < "$STADIR/dead")"
 	fi
 	echo "</table>"
 fi
 NLIVE=$(wc -l < "$STADIR/live" 2>/dev/null | tr -d ' ')
-printf '<p class=note>%s client device(s) with a timestamp, %s folded away without one. Names come from DHCP; unknown ones show their MAC. &quot;last heard&quot; is the age of the sta_mld row - the only client record that carries a time. A row without one cannot be shown as connected, so it is folded into the last line instead of claiming a state this page cannot check. Anything older than 300 s is shown as stale rather than connected: sta keeps departed clients for 20 days by design.</p>\n' "${NLIVE:-0}" "${NDEAD:-0}"
+printf '<p class=note>%s client device(s) the controller has evidence for, %s departed record(s) folded into the last row. Names come from DHCP; unknown ones show their MAC. Evidence is a sta_mld timestamp (&quot;last heard&quot;) or a non-zero conn_time, which the controller fills only once an agent reports the client - a non-MLO client has no MLD row and is judged on conn_time alone. Rows with neither, and MLD records not heard from in 300 s, are folded away rather than shown as connected: sta keeps departed clients for 20 days by design.</p>\n' "${NLIVE:-0}" "${NDEAD:-0}"
 
 # --------------------------------------------------------------- backhaul
 # Node-to-node links, from topology_link rather than from `sta`.
