@@ -191,10 +191,16 @@ else
 		# mlo_capable false on a single link and this page still called it
 		# MLO. Only a sta_mld row - which is also what "last heard" comes
 		# from - says the client really has more than one leg.
+		#
+		# And for a client that is NOT an MLD, listing every band of the
+		# AP-MLD it sits on is worse than saying nothing: it looks like a
+		# measurement and it is a guess. The client uses exactly one link
+		# and the database does not record which - sta.bssid holds the
+		# AP-MLD address, so nothing here can resolve it. Say so.
 		if [ "${ismld:-0}" != "0" ] && [ -n "$mldbands" ] && [ -n "$age" ]; then
 			bandtxt="<span class=ok>MLO</span> &middot; $(bands_name "$mldbands")"
-		elif [ "${ismld:-0}" != "0" ] && [ -n "$mldbands" ]; then
-			bandtxt="$(bands_name "$mldbands") <span class=sub>on AP-MLD</span>"
+		elif [ "${ismld:-0}" != "0" ]; then
+			bandtxt="<span class=na>band unknown</span> &middot; <span class=sub>one link on an AP-MLD</span>"
 		else
 			bandtxt=$(band_name "$band")
 		fi
@@ -224,12 +230,19 @@ else
 			printf '%s\n' "$name" >> "$STADIR/dead"
 			continue
 		fi
-		if [ -z "$age" ]; then
-			agetxt='<span class=na>&mdash;</span>'
-		elif [ "$age" -lt 90 ] 2>/dev/null; then
-			agetxt="<span class=ok>${age}s</span>"
+		# A dash here read as "no data", but for a non-MLO client we do have
+		# data - just of a different kind. It has no sta_mld row and never
+		# will, so there is no "last heard"; what we have is how long the
+		# controller has seen it connected. Say which one is on show rather
+		# than printing a dash next to a row that is demonstrably alive.
+		if [ -n "$age" ]; then
+			if [ "$age" -lt 90 ] 2>/dev/null; then
+				agetxt="<span class=ok>${age}s</span>"
+			else
+				agetxt="<span class=warn>${age}s</span>"
+			fi
 		else
-			agetxt="<span class=warn>${age}s</span>"
+			agetxt="<span class=sub>up ${conn}s</span>"
 		fi
 
 		# The "unverified" state that used to live here is gone: a row with
@@ -239,7 +252,9 @@ else
 		if [ "$assoc" = "1" ] && [ -n "$age" ] && [ "$age" -ge 300 ] 2>/dev/null; then
 			state='<span class=warn>stale</span>'
 		fi
-		[ "${conn:-0}" -gt 0 ] 2>/dev/null && state="$state <span class=sub>${conn}s</span>"
+		# conn_time used to be appended here as well, so the same number
+		# appeared twice in one row. It belongs in "last heard", which is
+		# the column about time; this one is about state.
 
 		printf '<tr><td>%s<td>%s<td>%s<td>%s<td class=num>%s</tr>\n' \
 			"<span class=dev>$name</span>" "$where" "$bandtxt" "$state" "$agetxt"
@@ -268,11 +283,16 @@ else
 		else
 			agetxt="<span class=warn>${age}s</span>"
 		fi
+		# This used to say "MLD only", which describes the shape of our data,
+		# not the state of the client. A row that got here has been heard
+		# from in the last 300 s - that is the same evidence any other row
+		# has, so say the same thing. Where it lives stays visible as a
+		# footnote, because it explains why some columns are thinner.
 		printf '<tr><td>%s<td>%s<td>%s<td>%s<td class=num>%s</tr>\n' \
 			"<span class=dev><span class=mac>$mac</span></span>" \
 			"$(node_name "$owner")" \
 			"<span class=ok>MLO</span> &middot; $(dash "$nsta") link(s)" \
-			"<span class=warn>MLD only</span>" "$agetxt"
+			"<span class=ok>connected</span> <span class=sub>MLD row only</span>" "$agetxt"
 		printf '%s\n' "$mac" >> "$STADIR/live"
 	done
 
@@ -416,16 +436,20 @@ for t in $(q "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIK
 		continue
 	fi
 
-	nfull=0; empties=""; detail=""
+	# The per-column expander that used to be here is gone. It listed every
+	# column of every table with a sample value - a page of detail nobody
+	# read, and a second query per column to fetch the sample. What actually
+	# gets used is the line below: how many columns are filled and which are
+	# not. That is what showed on 2026-08-04 that neighbor has no rows at
+	# all, that affiliated_sta.ruid is never written, and that sta_mld fills
+	# 9 of its 16 columns. Keep the finding, drop the wall of text.
+	nfull=0; empties=""
 	for c in $cols; do
 		filled=$(q "SELECT count(*) FROM \"$t\" WHERE \"$c\" IS NOT NULL AND \"$c\" != ''")
-		ex=$(q "SELECT \"$c\" FROM \"$t\" WHERE \"$c\" IS NOT NULL AND \"$c\" != '' LIMIT 1" | cut -c1-24)
 		if [ "$filled" -eq 0 ]; then
 			empties="${empties}${empties:+, }$c"
-			detail="${detail}<tr><td>&nbsp;&nbsp;<span class=warn>$c</span><td class=\"num warn\">0/$rows<td colspan=2 class=sub>never written</tr>"
 		else
 			nfull=$(( nfull + 1 ))
-			detail="${detail}<tr><td>&nbsp;&nbsp;$c<td class=\"num ok\">$filled/$rows<td colspan=2 class=num>$(dash "$ex")</tr>"
 		fi
 	done
 
@@ -439,8 +463,6 @@ for t in $(q "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIK
 	else
 		printf '<td class=ok>&mdash;</tr>\n'
 	fi
-	printf '<tr><td colspan=5><details><summary class=sub>all %s columns</summary><table>%s</table></details></tr>\n' \
-		"$ncols" "$detail"
 done
 echo "</table>"
 
