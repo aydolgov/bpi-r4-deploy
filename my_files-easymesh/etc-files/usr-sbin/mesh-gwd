@@ -28,9 +28,12 @@ PROBE=${PROBE:-1.1.1.1}
 GW_FALLBACK=${GW_FALLBACK:-10.10.10.1}
 PERIOD=${PERIOD:-3}
 # Hysteresis. Handing the gateway over is disruptive and unplugging a cable
-# is rare, so the daemon should be slow to believe the uplink died: four
-# consecutive failed probes, i.e. ~12 s of silence, not one lost packet.
-FAILS_TO_DROP=${FAILS_TO_DROP:-4}
+# is rare, so the daemon should be slow to believe the uplink died. Six
+# strikes, because a DHCP renewal takes the WAN interface down and back up
+# - and this ISP renews every five minutes (600 s leases) - which looks
+# exactly like a pulled cable for a few seconds. Only a real unplug keeps
+# failing for half a minute.
+FAILS_TO_DROP=${FAILS_TO_DROP:-6}
 
 log() { logger -t mesh-gwd "$1"; echo "$(date +%T) $1"; }
 
@@ -78,8 +81,23 @@ uplink_ok() {
 	return 1
 }
 
+# Keep the way out installed while we are the gateway. netifd tears the
+# WAN interface down and back up on every DHCP renewal - and an ISP that
+# hands out 600-second leases does that every five minutes - which drops
+# the default route each time. Re-installing it on every pass is cheap
+# (ip route replace is a no-op when it already matches) and it is what
+# keeps the gateway usable between renewals (measured 2026-08-05).
+keep_route() {
+	isp=$(ubus call network.interface.wan status 2>/dev/null | \
+	      jsonfilter -e '@.route[0].nexthop' 2>/dev/null)
+	[ -n "$isp" ] || return 0
+	ip route show default | grep -q "via $isp" && return 0
+	ip route replace default via "$isp" dev "$WAN_IF" 2>/dev/null && \
+		log "restored default route via $isp (renewal?)"
+}
+
 claim() {
-	have_vip && return 0
+	have_vip && { keep_route; return 0; }
 
 	# Two cables plugged in at once: whoever holds the address keeps it,
 	# unless our LAN address sorts lower (a stable, arbitrary tie-break -
