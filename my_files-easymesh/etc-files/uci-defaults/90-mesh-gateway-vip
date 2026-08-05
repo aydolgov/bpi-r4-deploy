@@ -1,0 +1,47 @@
+#!/bin/sh
+# Wire up the roaming gateway: the clients' default route is a virtual
+# address (VIP) carried by whichever node currently holds a working
+# uplink, not the physical address of any one router. See
+# /usr/sbin/mesh-gwd and the design notes from 2026-08-05.
+#
+# Everything here is written only when it is missing, for the reason
+# 98-mesh-dhcp-safe documents at length: uci-defaults run again on the
+# first boot after a keep-config sysupgrade, over the RESTORED config,
+# so anything set unconditionally would undo a deliberate choice on
+# every upgrade.
+
+VIP=10.10.10.254
+
+# 1. Hand the VIP to clients as their gateway (DHCP option 3). Without
+#    this they would get the serving router's own address and lose the
+#    internet the moment the cable moved to another node.
+if ! uci -q get dhcp.lan.dhcp_option | grep -q "3,$VIP"; then
+	uci -q del_list dhcp.lan.dhcp_option="3,$VIP"
+	uci add_list dhcp.lan.dhcp_option="3,$VIP"
+fi
+
+# 2. Resolve names regardless of where the cable is. The ISP's own
+#    resolvers are known only to the node currently holding the uplink,
+#    and dnsmasq stays put - so it must not depend on them.
+if [ -z "$(uci -q get dhcp.@dnsmasq[0].server)" ]; then
+	uci add_list dhcp.@dnsmasq[0].server='1.1.1.1'
+	uci add_list dhcp.@dnsmasq[0].server='8.8.8.8'
+	uci set dhcp.@dnsmasq[0].noresolv='1'
+fi
+
+# 3. One router per L2 domain announces itself. All nodes shipped as
+#    ra=server, each advertising its own ULA prefix into the shared
+#    bridge, so a client collected several IPv6 sets that led nowhere -
+#    iOS reports that as "limited compatibility" (measured 2026-08-05).
+#    No global IPv6 reaches us today, so nobody announces anything.
+[ -n "$(uci -q get dhcp.lan.ra)" ] || uci set dhcp.lan.ra='disabled'
+[ -n "$(uci -q get dhcp.lan.dhcpv6)" ] || uci set dhcp.lan.dhcpv6='disabled'
+
+uci commit dhcp
+
+# 4. Start the daemon that moves the VIP. It is harmless on a node that
+#    never sees a cable: without an uplink it simply routes out through
+#    the VIP like every other node.
+/etc/init.d/mesh-gwd enable 2>/dev/null
+
+exit 0

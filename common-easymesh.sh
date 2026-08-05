@@ -118,7 +118,11 @@ easymesh_install_mld_scripts() {
 	# nepolluje a uz nikdy se nepripoji. Zmereno na x8 po studenem startu:
 	# wifimngr v 42 s, sokety v 86-93 s -> 1 socket misto 13 a vsichni
 	# producenti udalosti jsou mrtvy kod, TISE (evmap se otevrel v poradku).
-	for s in evsrc-check:S99 wifi-evmap:S94 wnm-enable:S19 mld-link-check:S98 mld-config-check:S96 mld-report-check:S99 boot-census:S99 node-heartbeat:S99 mld-bsta-relink:S99; do
+	# mesh-gwd:S98 - the roaming internet gateway (2026-08-05). The node
+	# holding a working uplink carries the clients' gateway address; the
+	# others route out through it. Harmless on a node that never sees a
+	# cable - it simply routes out like everyone else.
+	for s in evsrc-check:S99 wifi-evmap:S94 wnm-enable:S19 mld-link-check:S98 mld-config-check:S96 mld-report-check:S99 boot-census:S99 node-heartbeat:S99 mld-bsta-relink:S99 mesh-gwd:S98; do
 		local name="${s%%:*}" rc="${s##*:}"
 		\cp "$E/usr-sbin/$name" "files/usr/sbin/$name";  chmod +x "files/usr/sbin/$name"
 		\cp "$E/init.d/$name"   "files/etc/init.d/$name"; chmod +x "files/etc/init.d/$name"
@@ -159,6 +163,13 @@ easymesh_install_mld_scripts() {
 	#
 	# Nástroj zůstává spustitelný ručně, když někdo pinovat chce.
 	\cp "$E/usr-sbin/bssid-pin" files/usr/sbin/bssid-pin; chmod +x files/usr/sbin/bssid-pin
+
+	# mesh-role: sets which node serves DHCP/DNS and routes out. A tool
+	# only - the choice is the user's and it is static. Getting it wrong
+	# is the 2026-07-25 failure (two DHCP servers, clients with an
+	# address and no internet), so it is idempotent and refuses to
+	# strand the network.
+	\cp "$E/usr-sbin/mesh-role" files/usr/sbin/mesh-role; chmod +x files/usr/sbin/mesh-role
 
 	# mlo-backhaul-setup: postavi REALNY MLO backhaul (druhe AP-MLD + MLD STA)
 	# misto dnesniho jednolinkoveho 6GHz spoje. JEN nastroj, ZADNY init.d — pousti
@@ -204,6 +215,13 @@ easymesh_install_mld_scripts() {
 	# Sberac logu zapnout pri bootu - init skript se dosud spoustel jen rucne
 	# a /etc/rc.d flash neprezije, takze roura /tmp/mapagent.log zustavala bez ctenare.
 	\cp "$E/uci-defaults/92-log-collect-enable" files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/92-log-collect-enable
+
+	# 90-mesh-gateway-vip: hands clients the virtual gateway address,
+	# pins public resolvers (the ISP's are known only to whichever node
+	# holds the cable), and silences the IPv6 announcements every node
+	# was making into the shared bridge. Writes only what is missing -
+	# uci-defaults run again after a keep-config sysupgrade.
+	\cp "$E/uci-defaults/90-mesh-gateway-vip" files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/90-mesh-gateway-vip
 
 	# 91-mlo-steerd-off: mlo-steerd zustava v obrazu, ale nespousti se sam.
 	# Je to druhy, nezavisly steering mozek vedle EasyMesh controlleru a 4.8.
