@@ -28,8 +28,9 @@ case "$FULL" in
 	*) echo "FAIL: feed HEAD $FULL does not match pin $PIN"; echo "      (git -C $FEED reset --hard $PIN)"; exit 1 ;;
 esac
 
-grep -qs "src-link iopsys $FEED" "$BD/feeds.conf.default" "$BD/feeds.conf" || {
-	echo "FAIL: $BD does not src-link $FEED - wrong tree?"; exit 1; }
+LINKED=$(grep -hs "^src-link iopsys " "$BD/feeds.conf.default" "$BD/feeds.conf" | awk "{print \$3}" | head -1)
+[ -n "$LINKED" ] && [ "$(readlink -f "$LINKED")" = "$(readlink -f "$FEED")" ] || {
+	echo "FAIL: $BD src-links [$LINKED], not $FEED - wrong tree?"; exit 1; }
 
 cd "$BD"
 make "package/$PKG/clean" >/dev/null 2>&1 || true
