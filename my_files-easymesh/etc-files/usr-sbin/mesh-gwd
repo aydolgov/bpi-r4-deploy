@@ -26,6 +26,8 @@ WAN_IF=${WAN_IF:-wan}
 PROBE=${PROBE:-1.1.1.1}
 # Legacy static gateway to clear on takeover (pre-VIP deployments).
 GW_FALLBACK=${GW_FALLBACK:-10.10.10.1}
+# Uplink towards the rest of the mesh (absent on the root node).
+BSTA=${BSTA:-bsta-mld-3}
 PERIOD=${PERIOD:-3}
 # Hysteresis. Handing the gateway over is disruptive and unplugging a cable
 # is rare, so the daemon should be slow to believe the uplink died. Six
@@ -38,6 +40,24 @@ FAILS_TO_DROP=${FAILS_TO_DROP:-6}
 log() { logger -t mesh-gwd "$1"; echo "$(date +%T) $1"; }
 
 have_vip() { ip -4 addr show dev "$LAN" | grep -q "inet $VIP/"; }
+
+# A gateway nobody can reach is not a gateway. Holding the cable is only
+# half the job: the node must also be part of the mesh, or the clients
+# send their traffic to an address that answers from an island.
+#
+# Found the hard way (2026-08-05): the middle node of the chain was
+# switched off for a test while the ISP cable sat in the far node. That
+# node kept its uplink, kept the VIP - and the entire mesh lost the
+# internet, because the only way to the gateway went through the node
+# that was off.
+#
+# A node with an uplink port (bsta) must have it associated. The root
+# has no bsta and is by definition in the mesh.
+in_mesh() {
+	ip link show "$BSTA" >/dev/null 2>&1 || return 0
+	iw dev "$BSTA" link 2>/dev/null | grep -q "^Connected" || return 1
+	return 0
+}
 
 # "Do I have a way out THROUGH MY OWN CABLE?" - three conditions, cheapest
 # first. The probe MUST be sourced from the WAN address: every node reaches
@@ -163,9 +183,15 @@ fails=0
 log "started: VIP=$VIP lan=$LAN wan=$WAN_IF probe=$PROBE"
 
 while :; do
-	if uplink_ok; then
+	if uplink_ok && in_mesh; then
 		fails=0
 		claim
+	elif have_vip && ! in_mesh; then
+		# Cut off from the mesh: give the address up at once, without
+		# the usual grace period. Every second we hold it is a second
+		# the whole network has no gateway at all.
+		log "cut off from the mesh - releasing $VIP"
+		release
 	else
 		fails=$((fails + 1))
 		if [ "$fails" -ge "$FAILS_TO_DROP" ]; then
