@@ -1,0 +1,97 @@
+#!/bin/sh
+# mesh-gwd - the internet gateway follows the cable.
+#
+# Plug the ISP cable into ANY node and the whole mesh goes online; move it
+# to another node and it goes online again, without touching a single
+# client. The mesh is one L2 domain, so this is the classic VRRP setup a
+# wired LAN would use - keepalived would be the standard answer, but it
+# needs kmod-macvlan and kernel modules from the OpenWrt repo do not match
+# our MTK-feed kernel. Our case is also narrower than VRRP: the node that
+# owns the cable owns the address, and nothing else competes for it.
+#
+# The clients' gateway is a virtual address (VIP) that lives on whichever
+# node currently has a working uplink:
+#
+#   have uplink  -> claim VIP, enable NAT, announce with gratuitous ARP
+#   lost uplink  -> release VIP, disable NAT, let another node take over
+#
+# Measured 2026-08-05: moving the VIP between two nodes cost zero pings
+# (75 probes at 0.1 s, no gap) - the announce is what makes it seamless.
+#
+# Deliberately NOT done here: nothing touches wifi, the backhaul or the
+# mesh itself. The worst failure mode is "no internet", never "no mesh".
+VIP=${VIP:-10.10.10.254}
+LAN=${LAN:-br-lan}
+WAN_IF=${WAN_IF:-wan}
+PROBE=${PROBE:-1.1.1.1}
+PERIOD=${PERIOD:-3}
+# hysteresis: one lost packet is not an outage
+FAILS_TO_DROP=${FAILS_TO_DROP:-2}
+
+log() { logger -t mesh-gwd "$1"; echo "$(date +%T) $1"; }
+
+have_vip() { ip -4 addr show dev "$LAN" | grep -q "inet $VIP/"; }
+
+# "Do I have a way out THROUGH MY OWN CABLE?" - three conditions, cheapest
+# first. The probe MUST be sourced from the WAN address: every node reaches
+# the internet through the mesh already, so an unbound ping would answer
+# "yes" on a node whose WAN port holds nothing but a dead switch - and two
+# nodes would then both claim to be the gateway.
+uplink_ok() {
+	ip -br link show "$WAN_IF" 2>/dev/null | grep -q "LOWER_UP" || return 1
+
+	src=$(ubus call network.interface.wan status 2>/dev/null | \
+	      jsonfilter -e '@["ipv4-address"][0].address' 2>/dev/null)
+	[ -n "$src" ] || return 1
+
+	ping -c 1 -W 2 -I "$src" "$PROBE" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+claim() {
+	have_vip && return 0
+
+	# Two cables plugged in at once: whoever holds the address keeps it,
+	# unless our LAN address sorts lower (a stable, arbitrary tie-break -
+	# the same job VRRP does with priorities). Without this both nodes
+	# would answer for the VIP and the ARP cache would decide at random.
+	if arping -D -c 2 -w 3 -I "$LAN" "$VIP" >/dev/null 2>&1; then
+		: # nobody answered, the address is free
+	else
+		my=$(ip -4 -br addr show dev "$LAN" | awk '{print $3}' | cut -d/ -f1)
+		peer=$(ip neigh show "$VIP" 2>/dev/null | awk '{print $5}')
+		log "VIP already held (by $peer); standing by as backup ($my)"
+		return 1
+	fi
+
+	ip addr add "$VIP/24" dev "$LAN" 2>/dev/null || return 1
+	# Tell everyone the address moved; this is what makes it seamless.
+	arping -c 3 -A -I "$LAN" "$VIP" >/dev/null 2>&1
+	log "claimed $VIP (uplink up on $WAN_IF)"
+}
+
+release() {
+	have_vip || return 0
+	ip addr del "$VIP/24" dev "$LAN" 2>/dev/null
+	log "released $VIP (no uplink)"
+}
+
+# Hand the address back on the way out. Without this a stopped daemon would
+# leave the VIP behind on a node that no longer watches it, and the next
+# node to take over would find the address "already held" - by a ghost.
+cleanup() { release; exit 0; }
+trap cleanup INT TERM
+
+fails=0
+log "started: VIP=$VIP lan=$LAN wan=$WAN_IF probe=$PROBE"
+
+while :; do
+	if uplink_ok; then
+		fails=0
+		claim
+	else
+		fails=$((fails + 1))
+		[ "$fails" -ge "$FAILS_TO_DROP" ] && release
+	fi
+	sleep "$PERIOD"
+done
