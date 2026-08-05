@@ -24,9 +24,13 @@ VIP=${VIP:-10.10.10.254}
 LAN=${LAN:-br-lan}
 WAN_IF=${WAN_IF:-wan}
 PROBE=${PROBE:-1.1.1.1}
+# Legacy static gateway to clear on takeover (pre-VIP deployments).
+GW_FALLBACK=${GW_FALLBACK:-10.10.10.1}
 PERIOD=${PERIOD:-3}
-# hysteresis: one lost packet is not an outage
-FAILS_TO_DROP=${FAILS_TO_DROP:-2}
+# Hysteresis. Handing the gateway over is disruptive and unplugging a cable
+# is rare, so the daemon should be slow to believe the uplink died: four
+# consecutive failed probes, i.e. ~12 s of silence, not one lost packet.
+FAILS_TO_DROP=${FAILS_TO_DROP:-4}
 
 log() { logger -t mesh-gwd "$1"; echo "$(date +%T) $1"; }
 
@@ -38,14 +42,40 @@ have_vip() { ip -4 addr show dev "$LAN" | grep -q "inet $VIP/"; }
 # "yes" on a node whose WAN port holds nothing but a dead switch - and two
 # nodes would then both claim to be the gateway.
 uplink_ok() {
+	# Ask the system which device carries the WAN instead of assuming a
+	# name: it is br-wan on the classic boards and eth1 on the Pro 8X,
+	# and it will be wwan0 the day someone plugs in an LTE module.
+	# Hard-coding "wan" made a Pro 8X with a live cable and an ISP
+	# address sit there insisting it had no uplink (measured 2026-08-05).
+	WAN_IF=$(ubus call network.interface.wan status 2>/dev/null | \
+		 jsonfilter -e '@.l3_device' 2>/dev/null)
+	[ -n "$WAN_IF" ] || return 1
+
 	ip -br link show "$WAN_IF" 2>/dev/null | grep -q "LOWER_UP" || return 1
 
 	src=$(ubus call network.interface.wan status 2>/dev/null | \
 	      jsonfilter -e '@["ipv4-address"][0].address' 2>/dev/null)
 	[ -n "$src" ] || return 1
 
-	ping -c 1 -W 2 -I "$src" "$PROBE" >/dev/null 2>&1 || return 1
-	return 0
+	# Probe the ISP's own gateway, not the open internet. A node that is
+	# not (yet) the mesh gateway routes by default THROUGH the mesh, so a
+	# packet aimed at 1.1.1.1 leaves the wrong way and fails even with a
+	# perfectly good cable - measured on the Pro 8X, 2026-08-05. The ISP
+	# gateway sits on the directly attached WAN subnet, so reaching it
+	# needs no default route at all and answers the only question that
+	# matters: is there a live uplink behind this cable?
+	isp=$(ubus call network.interface.wan status 2>/dev/null | \
+	      jsonfilter -e '@.route[0].nexthop' 2>/dev/null)
+	[ -n "$isp" ] || return 1
+
+	# Two chances, and ARP as a second opinion: ISP routers rate-limit
+	# ICMP, so a single lost echo is not evidence of a dead cable. With
+	# one probe the daemon flapped - claimed, released and re-claimed the
+	# address within a minute, which looked from the mesh like 60% packet
+	# loss on a link that was in fact running at 1152 Mbit/s (2026-08-05).
+	ping -c 2 -W 2 -I "$WAN_IF" "$isp" >/dev/null 2>&1 && return 0
+	arping -c 2 -w 3 -I "$WAN_IF" "$isp" >/dev/null 2>&1 && return 0
+	return 1
 }
 
 claim() {
@@ -67,13 +97,42 @@ claim() {
 	ip addr add "$VIP/24" dev "$LAN" 2>/dev/null || return 1
 	# Tell everyone the address moved; this is what makes it seamless.
 	arping -c 3 -A -I "$LAN" "$VIP" >/dev/null 2>&1
-	log "claimed $VIP (uplink up on $WAN_IF)"
+
+	# Stop routing out through the mesh - we ARE the way out now. The
+	# static default over br-lan is what every node uses to reach the
+	# gateway; on the gateway itself it would compete with the route the
+	# ISP's DHCP just installed, and which of the two wins is a coin toss.
+	ip route del default via "$VIP" dev "$LAN" 2>/dev/null
+	ip route del default via "$GW_FALLBACK" dev "$LAN" 2>/dev/null
+
+	# ...and install the way out ourselves. netifd will not always do it:
+	# with a static lan gateway already in the table the DHCP route can be
+	# skipped, and the node then holds the VIP with no route at all - the
+	# whole mesh points at a gateway that cannot forward (2026-08-05).
+	isp=$(ubus call network.interface.wan status 2>/dev/null | \
+	      jsonfilter -e '@.route[0].nexthop' 2>/dev/null)
+	[ -n "$isp" ] && ip route replace default via "$isp" dev "$WAN_IF" 2>/dev/null
+
+	log "claimed $VIP (uplink up on $WAN_IF via $isp)"
 }
 
 release() {
 	have_vip || return 0
 	ip addr del "$VIP/24" dev "$LAN" 2>/dev/null
 	log "released $VIP (no uplink)"
+}
+
+# Every node that is not the gateway reaches the internet through the VIP.
+# Kept as a separate step from release() because a node that never had the
+# cable needs it too - it is simply the normal state of a mesh node.
+follow_vip() {
+	have_vip && return 0
+	ip route show default | grep -q "via $VIP" && return 0
+	# Only if our own uplink is not the way out; otherwise leave the
+	# ISP route alone (this is the gateway node between two probes).
+	ip route show default | grep -q "dev $WAN_IF\|dev br-wan" && return 0
+	ip route replace default via "$VIP" dev "$LAN" 2>/dev/null && \
+		log "routing out through $VIP"
 }
 
 # Hand the address back on the way out. Without this a stopped daemon would
@@ -91,7 +150,10 @@ while :; do
 		claim
 	else
 		fails=$((fails + 1))
-		[ "$fails" -ge "$FAILS_TO_DROP" ] && release
+		if [ "$fails" -ge "$FAILS_TO_DROP" ]; then
+			release
+			follow_vip
+		fi
 	fi
 	sleep "$PERIOD"
 done

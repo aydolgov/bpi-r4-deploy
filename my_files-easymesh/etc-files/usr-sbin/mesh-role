@@ -66,8 +66,10 @@ status() {
 }
 
 set_gateway() {
-	echo "$(uname -n): role -> gateway (serves DHCP/DNS, routes out its own WAN)"
+	echo "$(uname -n): role -> gateway (serves DHCP/DNS + IPv6 RA, routes out its own WAN)"
 	run uci set dhcp.lan.ignore=0
+	run uci set dhcp.lan.ra=server
+	run uci set dhcp.lan.dhcpv6=server
 	run uci -q delete network.lan.gateway || true
 	run uci -q delete network.lan.dns || true
 	run uci commit dhcp
@@ -89,8 +91,17 @@ set_ap() {
 		exit 1
 	fi
 
-	echo "$(uname -n): role -> ap (no DHCP; route and resolve via $gw)"
+	echo "$(uname -n): role -> ap (no DHCP, no RA; route and resolve via $gw)"
 	run uci set dhcp.lan.ignore=1
+	# Same rule for IPv6: one router per L2 domain announces itself, not
+	# all of them. All three nodes shipped as ra=server, each advertising
+	# its OWN ULA prefix into the shared bridge, so a client collected
+	# three IPv6 sets that led nowhere - iOS calls that "limited
+	# compatibility" and it surfaced the moment the cable moved
+	# (2026-08-05). Harmless-looking and wrong for the same reason two
+	# DHCP servers are wrong.
+	run uci set dhcp.lan.ra=disabled
+	run uci set dhcp.lan.dhcpv6=disabled
 	run uci set network.lan.gateway="$gw"
 	run uci set network.lan.dns="$gw"
 	run uci commit dhcp
