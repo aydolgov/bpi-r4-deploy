@@ -1,4 +1,6 @@
 #!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (C) 2026 Petr Wozniak (WOZIWRT project)
 # Start mesh-gwd, the daemon that keeps the internet gateway on whichever
 # node holds the ISP cable. Disabled by default: enable it only once the
 # clients' gateway is the VIP, otherwise it just adds a spare address.

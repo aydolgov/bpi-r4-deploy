@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (C) 2026 Petr Wozniak (WOZIWRT project)
 # mesh-gwd - the internet gateway follows the cable.
 #
 # Plug the ISP cable into ANY node and the whole mesh goes online; move it

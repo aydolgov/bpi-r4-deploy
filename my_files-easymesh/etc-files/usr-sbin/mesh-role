@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (C) 2026 Petr Wozniak (WOZIWRT project)
 # mesh-role - which node hands out addresses and routes to the internet.
 #
 # The mesh is one L2 domain, so from L3 it is an ordinary multi-router LAN:
