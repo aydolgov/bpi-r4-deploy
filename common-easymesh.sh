@@ -124,7 +124,10 @@ easymesh_install_mld_scripts() {
 	# cable - it simply routes out like everyone else.
 	for s in log-collect:S05 evsrc-check:S99 wifi-evmap:S94 wnm-enable:S19 mld-link-check:S98 mld-config-check:S96 mld-report-check:S99 boot-census:S99 node-heartbeat:S99 mld-bsta-relink:S99 mesh-gwd:S98; do
 		local name="${s%%:*}" rc="${s##*:}"
-		\cp "$E/usr-sbin/$name" "files/usr/sbin/$name";  chmod +x "files/usr/sbin/$name"
+		# usr-sbin part is optional - log-collect is init.d-only
+		if [ -e "$E/usr-sbin/$name" ]; then
+			\cp "$E/usr-sbin/$name" "files/usr/sbin/$name"; chmod +x "files/usr/sbin/$name"
+		fi
 		\cp "$E/init.d/$name"   "files/etc/init.d/$name"; chmod +x "files/etc/init.d/$name"
 		ln -sf "../init.d/$name" "files/etc/rc.d/${rc}${name}"
 	done
