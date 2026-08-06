@@ -122,7 +122,7 @@ easymesh_install_mld_scripts() {
 	# holding a working uplink carries the clients' gateway address; the
 	# others route out through it. Harmless on a node that never sees a
 	# cable - it simply routes out like everyone else.
-	for s in evsrc-check:S99 wifi-evmap:S94 wnm-enable:S19 mld-link-check:S98 mld-config-check:S96 mld-report-check:S99 boot-census:S99 node-heartbeat:S99 mld-bsta-relink:S99 mesh-gwd:S98; do
+	for s in log-collect:S05 evsrc-check:S99 wifi-evmap:S94 wnm-enable:S19 mld-link-check:S98 mld-config-check:S96 mld-report-check:S99 boot-census:S99 node-heartbeat:S99 mld-bsta-relink:S99 mesh-gwd:S98; do
 		local name="${s%%:*}" rc="${s##*:}"
 		\cp "$E/usr-sbin/$name" "files/usr/sbin/$name";  chmod +x "files/usr/sbin/$name"
 		\cp "$E/init.d/$name"   "files/etc/init.d/$name"; chmod +x "files/etc/init.d/$name"

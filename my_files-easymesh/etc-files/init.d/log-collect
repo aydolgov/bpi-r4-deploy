@@ -1,0 +1,112 @@
+#!/bin/sh /etc/rc.common
+# Sbírá výstup mesh démonů, který dnes končí v prázdnu.
+#
+# mapagent, mapcontroller i ieee1905d se spouštějí s -o /tmp/<jmeno>.log, a ta
+# cesta je FIFO. Nikdo z ní nečte, takže všechno, co démoni napíší, se zahodí.
+# Prakticky to znamená, že po jakémkoli problému není se čeho chytit - logread
+# obsahuje jen to, co jde přes syslog, a to je zlomek.
+#
+# Co to stálo 31. 7.: patch 0006 fungoval a mlčel o tom, a hláška o rozhraních
+# ztracených při parsování Topology Response existovala celou dobu. Obojí jsme
+# uviděli až po ručním připojení k rouře. Bez toho by první zůstal neověřený
+# a druhý nenalezený.
+#
+# Sbírá se do RAM, ne na flash. Změřeno 31. 7.: samotný mapagent sype 160 kB za
+# deset sekund, tedy zhruba 55 MB za hodinu a přes gigabajt denně. Na rootfs to
+# nesmí - první verze tohoto skriptu tam psala a za dvacet sekund vyrobila 450 kB.
+#
+# Na flash se ukládá jen snímek při zastavení služby, tedy při řízeném rebootu
+# nebo sysupgradu. Po tvrdém pádu nebo powercyklu logy nepřežijí; to je vědomý
+# kompromis proti opotřebení flash. Živá diagnostika za běhu je v /tmp.
+
+START=05
+STOP=99
+
+LOGDIR=/tmp/mapc-log
+KEEPDIR=/etc/mapc/log      # snímek při zastavení, přežije flash
+MAXSIZE=2097152         # 2 MB na soubor, tedy nejvýš 4 MB na démona v RAM
+CHECK=30                # jak často se kontroluje velikost
+WAIT_FIFO=180           # jak dlouho čekat, než démon rouru vytvoří
+
+FIFOS="mapagent mapcontroller ieee1905"
+
+kill_readers() {
+	for name in $FIFOS; do
+		for p in $(ps w 2>/dev/null | grep "cat /tmp/${name}.log" \
+			   | grep -v grep | awk '{print $1}'); do
+			kill "$p" 2>/dev/null
+		done
+	done
+	sleep 1
+}
+
+start() {
+	mkdir -p "$LOGDIR" 2>/dev/null
+
+	# Nejdřív uklidit po sobě.
+	#
+	# Na FIFO smí číst jen jeden. Když jich je víc, jádro mezi ně data
+	# rozdělí a celý záznam nemá nikdo - měřeno 31. 7., dva starty po sobě
+	# daly čtyři a pak šest čtenářů a prázdné soubory. Proto se každý start
+	# chová jako restart.
+	kill_readers
+
+	for name in $FIFOS; do
+		fifo="/tmp/${name}.log"
+		out="$LOGDIR/${name}.log"
+
+		# Na rouru se čeká, nepřeskakuje se.
+		#
+		# První verze měla [ -p "$fifo" ] || continue, a protože tahle služba
+		# startuje dřív než démoni, žádná roura ještě neexistovala - sběrač
+		# se spustil, nic nenašel a tiše skončil. Po rebootu 31. 7. bylo
+		# v RAM nula souborů a snímek na flashi prázdný. Past, která se
+		# nespustí, vypadá stejně jako past, která nic nenašla.
+		#
+		# Čekání je omezené, aby po démonovi, který nikdy nenaběhne,
+		# nezůstala věčná smyčka.
+		(
+			i=0
+			while [ ! -p "$fifo" ] && [ "$i" -lt "$WAIT_FIFO" ]; do
+				sleep 2
+				i=$((i + 2))
+			done
+			[ -p "$fifo" ] || exit 0
+
+			# cat skončí, jakmile démon rouru zavře (jeho restart),
+			# proto smyčka - jinak by se po prvním restartu přestalo sbírat.
+			while true; do
+				cat "$fifo" >> "$out" 2>/dev/null
+				sleep 2
+			done
+		) &
+	done
+
+	# Rotace. Kopíruje a zkracuje na místě, takže čtenáři nemusí nic vědět:
+	# zápis přes >> po zkrácení pokračuje od začátku souboru.
+	(
+		while true; do
+			sleep "$CHECK"
+			for name in $FIFOS; do
+				out="$LOGDIR/${name}.log"
+				[ -f "$out" ] || continue
+				size=$(wc -c < "$out" 2>/dev/null || echo 0)
+				[ "$size" -gt "$MAXSIZE" ] && {
+					cp -f "$out" "$out.1" 2>/dev/null
+					: > "$out"
+				}
+			done
+		done
+	) &
+}
+
+stop() {
+	# Poslední kus na flash, ať je po řízeném rebootu co číst.
+	mkdir -p "$KEEPDIR" 2>/dev/null
+	for name in $FIFOS; do
+		[ -f "$LOGDIR/${name}.log" ] || continue
+		tail -c 131072 "$LOGDIR/${name}.log" > "$KEEPDIR/${name}.log" 2>/dev/null
+	done
+
+	kill_readers
+}
