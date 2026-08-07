@@ -31,3 +31,6 @@ openwrt/
 mtk-openwrt-feeds/
 iopsys-feed/
 *.bak-*
+.build.pid
+*.pred-almac
+easymesh-r6-feed/
