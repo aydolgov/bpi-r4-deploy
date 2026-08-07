@@ -95,6 +95,20 @@ easymesh_install_wifimgr           # SDILENE: luci-app-wifimgr (nese country=CZ)
 ./scripts/feeds install -a
 
 easymesh_setup_iopsys_feed          # SDÍLENÝ iopsys feed
+
+# --- produktovy feed woziwrt (ZAMERNE JEN universal) ------------------------
+# Baliky easymesh* stavi jen tento builder, x8 ne. Oba stavi pro tutez
+# architekturu aarch64_cortex-a53, takze jedna sada .apk slouzi obema deskam.
+# Kdyby je stavely oba, vznikly by dve sady stejne verze s jinym otiskem a
+# u nasazeneho baliku by nebylo poznat, ze ktereho stromu pochazi.
+#
+# Radek musi pribyt tady a ne natrvalo v feeds.conf.default: builder vyse dela
+# `rm -rf openwrt` a klonuje znovu, takze rucni uprava toho souboru nikdy
+# neprezije jediny build.
+grep -q "src-link easymeshr6" feeds.conf.default || \
+	echo "src-link easymeshr6 ${EASYMESH_SHARED}/easymesh-r6-feed" >> feeds.conf.default
+./scripts/feeds update easymeshr6
+./scripts/feeds install easymesh easymesh-config easymesh-mesh easymesh-wifi
 \cp ../my_files/fit.sh package/utils/fitblk/files/fit.sh
 
 \cp -r ../configs/my_defconfig-universal-easymesh .config   # klasik device volby
@@ -103,6 +117,14 @@ easymesh_apply_defconfig            # SDÍLENÉ easymesh symboly + TR181/bbfdm o
 echo "CONFIG_PACKAGE_trusted-firmware-a-mt7988-emmc-comb-4bg=y" >> .config
 echo "CONFIG_PACKAGE_trusted-firmware-a-mt7988-sdmmc-comb-4bg=y" >> .config
 echo "CONFIG_PACKAGE_trusted-firmware-a-mt7988-spim-nand-ubi-comb-4bg=y" >> .config
+
+# Produktove baliky jako =m: .apk se vyrobi do bin/, ale do obrazu se NEZAPECOU.
+# To je zamer - mesh vrstva se na uzel dostava pres `apk add easymesh` a da se
+# tak aktualizovat bez reflashe. Overeno 2026-08-07 na bpi-4g2 od nuly.
+echo "CONFIG_PACKAGE_easymesh=m" >> .config
+echo "CONFIG_PACKAGE_easymesh-config=m" >> .config
+echo "CONFIG_PACKAGE_easymesh-mesh=m" >> .config
+echo "CONFIG_PACKAGE_easymesh-wifi=m" >> .config
 
 # PREPARE_ONLY=1 → doběhne k nastageovanému .config+patches+files/ (verify),
 # přeskočí dlouhý full build. Prázdné/0 = normální build.
