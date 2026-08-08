@@ -125,8 +125,8 @@ echo "CONFIG_PACKAGE_easymesh=m" >> .config
 echo "CONFIG_PACKAGE_easymesh-config=m" >> .config
 echo "CONFIG_PACKAGE_easymesh-mesh=m" >> .config
 echo "CONFIG_PACKAGE_easymesh-wifi=m" >> .config
-echo "CONFIG_PACKAGE_easymesh-api=m" >> .config
-echo "CONFIG_PACKAGE_luci-app-easymesh=m" >> .config
+echo "CONFIG_PACKAGE_easymesh-api=y" >> .config
+echo "CONFIG_PACKAGE_luci-app-easymesh=y" >> .config
 
 # PREPARE_ONLY=1 → doběhne k nastageovanému .config+patches+files/ (verify),
 # přeskočí dlouhý full build. Prázdné/0 = normální build.
@@ -137,4 +137,27 @@ if [ "${PREPARE_ONLY:-0}" = 1 ]; then
 	echo ">>> PREPARE_ONLY: .config + patche + files/ nastageovany, full build PRESKOCEN"
 else
 	bash ../mtk-openwrt-feeds/autobuild/unified/autobuild.sh "${AUTOBUILD_TARGET}" build
+fi
+
+# --- apk repo artefakt (release kandidat) ------------------------------------
+# Sklada kompletni repozitar (produktove baliky + iopsys jadro + WiFi vrstva
+# vc. wpad + zavislosti) primo z buildu, s indexem. Do 2026-08-08 se skladal
+# rucne a jednou se pri tom zapomnel luci balik - proto je to krok builderu.
+if [ "${PREPARE_ONLY:-0}" != 1 ]; then
+	REPO="$(cd .. && pwd)/easymesh-repo"
+	rm -rf "$REPO"; mkdir -p "$REPO"
+	( cd bin/packages/aarch64_cortex-a53 &&
+	  cp easymeshr6/*.apk "$REPO"/ &&
+	  for n in wpad-openssl hostapd-common ieee1905 ieee1905-map-plugin \
+	           libeasy libieee1905 libwifi libwifiutils map-agent \
+	           map-controller wifimngr libsqlite3-0 sqlite3-cli libnl200 \
+	           libnl-cli200 libnl-nf200 libnl-route200 libopenssl-conf \
+	           openssl-util uuidgen iputils-arping ebtables-legacy \
+	           ebtables-legacy-utils; do
+	      f=$(ls */${n}-[0-9]*.apk 2>/dev/null | head -1)
+	      [ -n "$f" ] && cp "$f" "$REPO"/ || echo "REPO WARN: $n nenalezen"
+	  done )
+	staging_dir/host/bin/apk mkndx --allow-untrusted \
+		-o "$REPO/packages.adb" "$REPO"/*.apk
+	echo ">>> easymesh-repo: $(ls "$REPO"/*.apk | wc -l) baliku + packages.adb"
 fi
