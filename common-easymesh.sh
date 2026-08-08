@@ -284,6 +284,7 @@ CONFIG_PACKAGE_ieee1905=y
 CONFIG_PACKAGE_ieee1905-map-plugin=y
 CONFIG_PACKAGE_wifimngr=y
 CONFIG_PACKAGE_map-agent=y
+CONFIG_PACKAGE_kmod-ebtables=y
 CONFIG_PACKAGE_map-controller=y
 CONFIG_PACKAGE_wpad-openssl=y
 CONFIG_PACKAGE_hostapd-common=y
