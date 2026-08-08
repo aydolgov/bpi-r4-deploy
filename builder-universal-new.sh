@@ -108,7 +108,7 @@ easymesh_setup_iopsys_feed          # SDÍLENÝ iopsys feed
 grep -q "src-link easymeshr6" feeds.conf.default || \
 	echo "src-link easymeshr6 ${EASYMESH_SHARED}/easymesh-r6-feed" >> feeds.conf.default
 ./scripts/feeds update easymeshr6
-./scripts/feeds install easymesh easymesh-config easymesh-mesh easymesh-wifi
+./scripts/feeds install easymesh easymesh-config easymesh-mesh easymesh-wifi easymesh-api
 \cp ../my_files/fit.sh package/utils/fitblk/files/fit.sh
 
 \cp -r ../configs/my_defconfig-universal-easymesh .config   # klasik device volby
@@ -125,6 +125,7 @@ echo "CONFIG_PACKAGE_easymesh=m" >> .config
 echo "CONFIG_PACKAGE_easymesh-config=m" >> .config
 echo "CONFIG_PACKAGE_easymesh-mesh=m" >> .config
 echo "CONFIG_PACKAGE_easymesh-wifi=m" >> .config
+echo "CONFIG_PACKAGE_easymesh-api=m" >> .config
 
 # PREPARE_ONLY=1 → doběhne k nastageovanému .config+patches+files/ (verify),
 # přeskočí dlouhý full build. Prázdné/0 = normální build.
