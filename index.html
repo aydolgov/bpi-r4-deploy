@@ -1,0 +1,11 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>woziwrt package feeds</title>
+<h1>woziwrt package feeds</h1>
+<p>apk (v3) repositories for BPI-R4 images built by this project.</p>
+<h2>EasyMesh R6</h2>
+<pre>echo "https://woziwrt.github.io/bpi-r4-deploy/easymesh/packages.adb" &gt; /etc/apk/repositories.d/easymesh.list
+apk update --allow-untrusted
+apk add   --allow-untrusted easymesh</pre>
+<p>The index is not signed yet, so <code>--allow-untrusted</code> is needed on both commands.</p>
+<p><a href="https://github.com/woziwrt/bpi-r4-deploy/releases/tag/easymesh-latest">Release notes and the full story</a></p>
