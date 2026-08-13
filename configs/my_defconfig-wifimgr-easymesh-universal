@@ -374,3 +374,19 @@ CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_bananapi_bpi-r4-nand-8gb=y
 CONFIG_TARGET_DEVICE_PACKAGES_mediatek_filogic_DEVICE_bananapi_bpi-r4-nand-8gb=""
 CONFIG_IEEE1905_CMDU_SA_IS_ALMAC=y
 CONFIG_PACKAGE_luci-app-wifimgr=y
+
+# Queue management, shipped but not switched on.
+#
+# Measured 2026-08-13 on a controller alone with the line saturated at
+# 476/46 Mbit/s: idle round-trip ~20 ms, under load 109 ms with 118 ms of
+# jitter and spikes to 480 ms. Nothing is wrong - br-wan carries a noqueue
+# qdisc, so nothing is holding the queues short, and this is what that looks
+# like once the link is actually full.
+#
+# Off by default on purpose: SQM has to be told the line rate, and a wrong
+# number costs more throughput than the latency it buys. The packages are
+# here so a user who knows their line can switch it on in LuCI without a
+# rebuild.
+CONFIG_PACKAGE_sqm-scripts=y
+CONFIG_PACKAGE_luci-app-sqm=y
+CONFIG_PACKAGE_kmod-sch_cake=y
