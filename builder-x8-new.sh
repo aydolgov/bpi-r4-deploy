@@ -123,6 +123,39 @@ easymesh_setup_iopsys_feed          # SDÍLENÝ iopsys feed (jeden zdroj, bez dr
 \cp -r ../configs/my_defconfig-8x-full .config   # Pro-8X device volby (board delta)
 easymesh_apply_defconfig            # SDÍLENÉ easymesh symboly + TR181/bbfdm off
 
+# Mesh vrstva se do obrazu NEZAPÉKÁ - doručuje ji apk.
+#
+# Universal to dělá od 9. 8.; tenhle builder ne, a devět dní si toho nikdo
+# nevšiml. Následek se ukázal 14. 8. na čerstvě virginizovaném x8: na krabici
+# s nula nainstalovanými easymesh balíčky běžel mapcontroller I mapagent,
+# mapagent už stihl přepsat wireless a vyrobit bSTA, která lovila MAP--BH.
+# Blok, který na klasikovi drží čerstvý uzel v klidu, žije v postinst balíčku
+# easymesh - a ten na obrazu s zapečenými démony nemá co umlčet.
+#
+# Tyhle řádky patří AŽ ZA easymesh_apply_defconfig: poslední zápis do .config
+# vyhrává, takže se tím přebije sdílený helper, aniž by se na něj sahalo
+# (~/easymesh-shared/ používá i lab, do toho se nezasahuje).
+#
+# =m pořád všechno staví - balíčky skončí v bin/packages a jdou do apk repa.
+# Jen nejsou součástí firmwaru. Uzel je pak přesně tím, co říkají jeho balíčky.
+#
+# kmod-ebtables zůstává =y: jaderný modul patří do obrazu, apk ho do běžícího
+# jádra nedoplní. Stejně tak wpad-openssl a hostapd-common - bez nich nemá
+# čerstvý uzel žádnou WiFi, tedy ani jak si balíčky stáhnout.
+cat >> .config <<'NOBAKE_EOF'
+CONFIG_PACKAGE_libeasy=m
+CONFIG_PACKAGE_libwifi=m
+CONFIG_PACKAGE_libwifiutils=m
+CONFIG_PACKAGE_libieee1905=m
+CONFIG_PACKAGE_ieee1905=m
+CONFIG_PACKAGE_ieee1905-map-plugin=m
+CONFIG_PACKAGE_wifimngr=m
+CONFIG_PACKAGE_map-agent=m
+CONFIG_PACKAGE_map-controller=m
+CONFIG_PACKAGE_hostapd-utils=m
+CONFIG_PACKAGE_wpa-cli=m
+NOBAKE_EOF
+
 # Pro-8X ATF varianty (4bg)
 echo "CONFIG_PACKAGE_trusted-firmware-a-mt7988-emmc-comb-4bg=y" >> .config
 echo "CONFIG_PACKAGE_trusted-firmware-a-mt7988-sdmmc-comb-4bg=y" >> .config
