@@ -359,3 +359,6 @@ CONFIG_AS21XXX_PHY=m
 CONFIG_PACKAGE_kmod-macvlan=y
 CONFIG_PACKAGE_kmod-dummy=y
 CONFIG_IEEE1905_CMDU_SA_IS_ALMAC=y
+CONFIG_PACKAGE_sqm-scripts=y
+CONFIG_PACKAGE_luci-app-sqm=y
+CONFIG_PACKAGE_kmod-sched-cake=y
