@@ -37,6 +37,26 @@ band_name() {
 	esac
 }
 
+# "1,8,2" -> "2.4 + 5 + 6 GHz". Sorted numerically so the order is the band
+# order and not whatever group_concat happened to emit.
+bands_name() {
+	[ -n "$1" ] || { printf '<span class=na>&mdash;</span>'; return; }
+	printf '%s' "$1" | tr ',' '\n' | sort -n | uniq | while read -r b; do
+		case "$b" in 1) printf '2.4 + ' ;; 2) printf '5 + ' ;; 8) printf '6 + ' ;;
+			     '') : ;; *) printf 'band%s + ' "$b" ;; esac
+	done | sed 's/ + $/ GHz/'
+}
+
+# Seconds -> "3h 12m". Association time is the only freshness signal `sta` has;
+# a row stuck at zero has never been updated and is a leftover, not a client.
+dur() {
+	s=${1:-0}
+	[ "$s" -gt 0 ] 2>/dev/null || { printf 'no time'; return; }
+	if   [ "$s" -ge 3600 ]; then printf '%dh %dm' $((s/3600)) $((s%3600/60))
+	elif [ "$s" -ge 60 ];   then printf '%dm' $((s/60))
+	else printf '%ds' "$s"; fi
+}
+
 yn() {
 	case "$1" in
 		1) echo '<span class=ok>yes</span>' ;;
@@ -97,30 +117,106 @@ else
 	printf '<a href="?refresh=15">auto-refresh</a></div>\n'
 fi
 
+# ------------------------------------------------------------------ health
+# Roles first. Two controllers invalidate everything else on this page: on
+# 2026-07-24 topology, depth, MLD counts and steering all looked broken at once
+# and each symptom was chased separately for days, when there was one cause.
+#
+# HEURISTIC, and said so below. A controller cannot reliably see a second
+# controller that never onboarded to it; what it can see is a node that is
+# present but never registered as an agent, which is how the rogue showed up.
+# Ground truth is per node - mesh-env reports whether a controller runs there.
+echo "<h2>Health &mdash; roles</h2>"
+_nodes=$(q "select count(*) from agent;")
+_notagent=$(q "select count(*) from agent where is_agent=0;")
+echo "<table><tr><th>check<th>result</tr>"
+echo "<tr><td>nodes in database<td>$(dash "$_nodes")</tr>"
+if [ "${_notagent:-0}" -gt 0 ]; then
+	echo "<tr><td>present but not registered as agent<td><b>$_notagent</b> &mdash; possible second controller</tr>"
+else
+	echo "<tr><td>present but not registered as agent<td>0</tr>"
+fi
+echo "</table>"
+echo "<p class=note>Heuristic. Controller and agent are not exclusive - a"
+echo "controller normally runs an agent too, so a node calling itself an agent"
+echo "may still be running a controller, and this page cannot see one that never"
+echo "onboarded here. Run <code>mesh-env</code> on each node for the real answer.</p>"
+
 # ----------------------------------------------------------------- clients
-# The headline: which device is connected to which node. Devices by DHCP name
-# where known; nodes by name. Backhaul links (node-to-node) are shown too but
-# labelled, so a real client is easy to tell from mesh plumbing.
+# Which device is connected to which node. Real clients only - the node-to-node
+# backhaul gets its own section below, from a table that is actually right.
+#
+# Two things this section used to get wrong, both fixed 2026-08-02:
+#
+#   * It printed the band of whatever single BSS matched sta.bssid. For an MLO
+#     client that is nonsense: the MLD address usually equals link 0's BSSID, so
+#     a client happily using 6 GHz was reported as "2.4 GHz". If the BSSID is an
+#     AP-MLD we now say so and list every affiliated band.
+#   * It mixed backhaul links in with clients. They are mesh plumbing, they
+#     outnumber the clients, and sourcing them from `sta` was the reason the
+#     whole list went blank after a controller restart (see below).
 echo "<h2>Clients &mdash; who is connected where</h2>"
 NSTA=$(q "SELECT count(*) FROM sta WHERE COALESCE(is_bsta,0)=0")
-if [ "$(q "SELECT count(*) FROM sta")" = "0" ]; then
-	echo "<p class=note>No clients or backhaul links recorded yet.</p>"
+if [ "${NSTA:-0}" = "0" ]; then
+	echo "<p class=note>No client devices. Backhaul links are listed separately below.</p>"
 else
 	echo "<table class=big><tr><th>device<th>connected to<th>band<th>state</tr>"
 	q "SELECT COALESCE(NULLIF(s.hostname,''), s.macaddr), s.agent_almac, s.associated,
-	          COALESCE(s.is_bsta,0),
-	          (SELECT r.band FROM bss b JOIN radio r ON r.ruid=b.ruid WHERE b.bssid=s.bssid LIMIT 1)
-	   FROM sta s ORDER BY COALESCE(s.is_bsta,0), s.hostname, s.macaddr" |
-	while IFS='|' read -r name agent assoc isbsta band; do
-		dev="$name"
-		[ "$isbsta" = "1" ] && dev="<span class=sub>$name &middot; backhaul link</span>" \
-		                    || dev="<span class=dev>$name</span>"
+	          COALESCE(s.conn_time,0),
+	          (SELECT count(*) FROM affiliated_sta f WHERE f.mld_macaddr = s.macaddr),
+	          (SELECT group_concat(DISTINCT r.band) FROM affiliated_sta f
+	             JOIN affiliated_ap a ON a.bssid = f.bssid
+	             JOIN radio r ON r.ruid = a.ruid WHERE f.mld_macaddr = s.macaddr),
+	          (SELECT r.band FROM affiliated_ap a JOIN radio r ON r.ruid=a.ruid
+	             WHERE a.bssid = s.bssid LIMIT 1),
+	          (SELECT a.link_id FROM affiliated_ap a WHERE a.bssid = s.bssid LIMIT 1)
+	   FROM sta s WHERE COALESCE(s.is_bsta,0)=0
+	   ORDER BY s.hostname, s.macaddr" |
+	while IFS='|' read -r name agent assoc ct nlinks mldbands band linkid; do
+		if [ "${nlinks:-0}" -ge 2 ] 2>/dev/null && [ -n "$mldbands" ]; then
+			bandtxt="<span class=ok>MLO</span> &middot; $(bands_name "$mldbands") &middot; ${nlinks} links"
+		elif [ -n "$band" ]; then
+			bandtxt="$(band_name "$band")"
+			[ -n "$linkid" ] && bandtxt="$bandtxt <span class=sub>single link (id $linkid of an AP-MLD)</span>"
+		else
+			bandtxt=$(band_name "")
+		fi
+		if [ "$assoc" != "1" ]; then
+			state='left'
+		elif [ "${ct:-0}" = "0" ]; then
+			state='<span class=na>unconfirmed</span> <span class=sub>no association time - likely a leftover</span>'
+		else
+			state="<span class=ok>connected</span> <span class=sub>$(dur "$ct")</span>"
+		fi
 		printf '<tr><td>%s<td>%s<td>%s<td>%s</tr>\n' \
-			"$dev" "$(node_name "$agent")" "$(band_name "$band")" \
-			"$([ "$assoc" = "1" ] && echo '<span class=ok>connected</span>' || echo 'left')"
+			"<span class=dev>$name</span>" "$(node_name "$agent")" "$bandtxt" "$state"
 	done
 	echo "</table>"
-	printf '<p class=note>%s client device(s) and the backhaul links between nodes. Device names come from DHCP; unknown ones show their MAC. Node names live in /etc/mesh-node-names.</p>\n' "$NSTA"
+fi
+printf '<p class=note>%s client device(s). Names come from DHCP; unknown ones show their MAC - and a modern phone shows a random one, because iOS and Android invent a private address per network, so the MAC here will not match the one printed in the device settings. &quot;MLO&quot; appears only for a client the controller has affiliated links for; a client that associated with a single link is not doing MLO even when the AP offers three, and that is the client&#39;s choice. &quot;connected&quot; is the last state the controller was told about, not a live probe. A row with no association time is almost certainly a device that left: nothing removes it, because `sta` keeps clients for 20 days by design.</p>\n' "${NSTA:-0}"
+
+# --------------------------------------------------------------- backhaul
+# Node-to-node links, from topology_link rather than from `sta`.
+#
+# `sta` is filled from association events, so a controller that restarts while
+# the backhauls are already up never learns about them and the rows never
+# appear - measured 2026-08-02, the list sat empty with all three nodes meshed
+# and passing traffic. topology_link is rebuilt from Topology Responses and was
+# correct throughout, including the hop count that `sta` cannot express at all.
+echo "<h2>Backhaul &mdash; how the nodes reach the controller</h2>"
+if [ "$(q "SELECT count(*) FROM topology_link")" = "0" ]; then
+	echo "<p class=note>No node-to-node links recorded.</p>"
+else
+	echo "<table><tr><th>node<th>connects through<th>hops<th>depth</tr>"
+	q "SELECT child_almac, parent_almac, COALESCE(wifi_hops,''), COALESCE(depth,'')
+	   FROM topology_link ORDER BY depth, child_almac" |
+	while IFS='|' read -r child parent hops depth; do
+		printf '<tr><td>%s<td>%s<td class=num>%s<td class=num>%s</tr>\n' \
+			"$(node_name "$child")" "$(node_name "$parent")" \
+			"$(dash "$hops")" "$(dash "$depth")"
+	done
+	echo "</table>"
+	echo "<p class=note>Depth 1 is a direct neighbour of the controller. A node at depth 2 reaches it through another agent, which costs latency and makes it the first to suffer when the relay wobbles.</p>"
 fi
 
 # ------------------------------------------------------------------- nodes
@@ -175,6 +271,23 @@ done
 echo "</table>"
 
 # ---------------------------------------------------------------- coverage
+# Some node settings live in the U-Boot environment, not in uci: netmode (drives
+# whether genconfig emits MLD affiliation or legacy per-radio fronthauls),
+# owrt_country and disable_mlo. They are per unit, survive every sysupgrade, and
+# no EasyMesh TLV carries them, so this page cannot show them for the agents -
+# only the node itself can. Point at the tool instead of pretending otherwise.
+echo "<h2>Settings outside uci</h2>"
+echo "<p class=note>netmode, owrt_country and disable_mlo live in the U-Boot"
+echo "environment. They change how a node behaves, appear in no uci dump, are per"
+echo "unit and survive sysupgrade -n. No TLV carries them, so run"
+echo "<code>mesh-env</code> on the node you are asking about.</p>"
+echo "<table><tr><th>this controller<th>value</tr>"
+for v in netmode owrt_country disable_mlo; do
+	val=$(fw_printenv -n "$v" 2>/dev/null)
+	echo "<tr><td><code>$v</code><td>$(dash "$val")</tr>"
+done
+echo "</table>"
+
 echo "<h2>Raw tables (for us)</h2>"
 echo "<p class=note>The MAC-level inventory: one line per table, how many of its"
 echo "columns ever hold a value. This is the debug view - the sections above are"
