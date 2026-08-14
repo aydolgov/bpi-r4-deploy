@@ -17,7 +17,7 @@ cd openwrt; git checkout ${OPENWRT_COMMIT}; cd -;
 # BUMP TEST 2026-06-23: tarball nahrazen cerstvym clone z MTK GitHub (vetev git01 = nase linie)
 #tar xzf /home/ipsec/mtk-feeds-cache.tar.gz
 git clone --branch main https://github.com/mediatek/mtk-openwrt-feeds mtk-openwrt-feeds
-( cd mtk-openwrt-feeds && git checkout 3a4e2a2511af93cea1ca43205a02362423882b7c )
+( cd mtk-openwrt-feeds && git checkout b7873eae800034c05f8f6257b55949d6464eb2e3 )
 
 
 \cp -r my_files/999-sfp-10-additional-quirks.patch mtk-openwrt-feeds/25.12/files/target/linux/mediatek/patches-6.12
