@@ -86,7 +86,19 @@ python3 -c 'c=open("target/linux/mediatek/filogic/config-6.12").read(); open("ta
 mkdir -p files/etc/uci-defaults
 \cp -r ../my_files/99-set-hostname files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/99-set-hostname
 
-easymesh_install_mld_scripts        # SDÍLENÉ: mld-*-check, mesh-status, mapc-db-keep
+# easymesh_install_mld_scripts — ZÁMĚRNĚ NEVOLÁNO (universal to přestal volat 9. 8.)
+#
+# Kopírovalo mesh skripty do obrazu z my_files-easymesh/etc-files/. Tytéž
+# soubory ale dodávají i balíčky easymesh-wifi a easymesh-mesh - a každá kopie
+# se udržuje jinde. Změřeno 14. 8.: v obraze byly verze z 24. 7., v balíčcích
+# z 12. 8., tři týdny rozdílu.
+#
+# A apk to nespraví: /usr/sbin přepíše, ale /etc/init.d bere jako konfiguraci
+# a nechá starou verzi ležet, novou odloží jako .apk-new. Na čerstvě flashnutém
+# x8 tak po instalaci běžely červencové init skripty a mesh-gwd z nich si
+# rovnou vzal VIP mesh sítě.
+#
+# Bez tohohle volání nese obraz nulovou kopii a jediným zdrojem jsou balíčky.
 
 \cp -r ../my_files/99-pro-8x-network files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/99-pro-8x-network
 # compat_version fix: pro-8x chybí v board.d/05_compat-version → device by trčel
@@ -157,6 +169,31 @@ CONFIG_PACKAGE_wpa-cli=m
 NOBAKE_EOF
 
 # Pro-8X ATF varianty (4bg)
+
+# Poslední kontrola před buildem: opravdu se mesh vrstva nezapéká?
+#
+# .config se tu skládá ve vrstvách, každá přepisuje předchozí, a která vyhraje
+# pozná jen ten, kdo je přečte ve správném pořadí. Přesně tak se 9. srpna
+# rozešly buildery a devět dní si toho nikdo nevšiml: jeden dostal blok =m,
+# druhý ne, a jediné, co to prozradilo, byla čerstvě virginizovaná krabice,
+# na které běžel mapcontroller.
+#
+# tail -1, ne head -1: symbol je v .config dvakrát a kconfig počítá POSLEDNÍ.
+# (Na tohle jsem naletěl při ověřování téhle opravy a málem kvůli tomu zastavil
+# hodinový build.)
+for _s in libeasy libwifi libwifiutils libieee1905 ieee1905 \
+          ieee1905-map-plugin wifimngr map-agent map-controller \
+          hostapd-utils wpa-cli; do
+	_v=$(grep -E "^(# )?CONFIG_PACKAGE_${_s}[= ]" .config | tail -1)
+	case "$_v" in
+		*"=m") ;;
+		*) echo "CHYBA: CONFIG_PACKAGE_${_s} neni =m (je: ${_v:-CHYBI})" >&2
+		   echo "       mesh vrstva by se zapekla do obrazu" >&2
+		   exit 1 ;;
+	esac
+done
+echo ">>> kontrola: mesh vrstva je =m, do obrazu se nezapece"
+
 echo "CONFIG_PACKAGE_trusted-firmware-a-mt7988-emmc-comb-4bg=y" >> .config
 echo "CONFIG_PACKAGE_trusted-firmware-a-mt7988-sdmmc-comb-4bg=y" >> .config
 echo "CONFIG_PACKAGE_trusted-firmware-a-mt7988-spim-nand-ubi-comb-4bg=y" >> .config
