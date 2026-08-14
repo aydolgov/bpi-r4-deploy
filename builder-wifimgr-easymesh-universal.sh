@@ -185,6 +185,31 @@ CONFIG_PACKAGE_easymesh-api=m
 CONFIG_PACKAGE_luci-app-easymesh=m
 NOBAKE_EOF
 
+
+# Poslední kontrola před buildem: opravdu se mesh vrstva nezapéká?
+#
+# .config se tu skládá ve vrstvách, každá přepisuje předchozí, a která vyhraje
+# pozná jen ten, kdo je přečte ve správném pořadí. Přesně tak se 9. srpna
+# rozešly buildery a devět dní si toho nikdo nevšiml: jeden dostal blok =m,
+# druhý ne, a jediné, co to prozradilo, byla čerstvě virginizovaná krabice,
+# na které běžel mapcontroller.
+#
+# tail -1, ne head -1: symbol je v .config dvakrát a kconfig počítá POSLEDNÍ.
+# (Na tohle jsem naletěl při ověřování téhle opravy a málem kvůli tomu zastavil
+# hodinový build.)
+for _s in libeasy libwifi libwifiutils libieee1905 ieee1905 \
+          ieee1905-map-plugin wifimngr map-agent map-controller \
+          hostapd-utils wpa-cli; do
+	_v=$(grep -E "^(# )?CONFIG_PACKAGE_${_s}[= ]" .config | tail -1)
+	case "$_v" in
+		*"=m") ;;
+		*) echo "CHYBA: CONFIG_PACKAGE_${_s} neni =m (je: ${_v:-CHYBI})" >&2
+		   echo "       mesh vrstva by se zapekla do obrazu" >&2
+		   exit 1 ;;
+	esac
+done
+echo ">>> kontrola: mesh vrstva je =m, do obrazu se nezapece"
+
 echo "CONFIG_PACKAGE_trusted-firmware-a-mt7988-emmc-comb-4bg=y" >> .config
 echo "CONFIG_PACKAGE_trusted-firmware-a-mt7988-sdmmc-comb-4bg=y" >> .config
 echo "CONFIG_PACKAGE_trusted-firmware-a-mt7988-spim-nand-ubi-comb-4bg=y" >> .config
