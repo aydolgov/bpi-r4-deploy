@@ -242,16 +242,18 @@ easymesh_install_mld_scripts() {
 # na disku VM1. Od 25. 7. je zrcadleno:
 #
 #   remote woziwrt = https://github.com/woziwrt/iopsys-feed.git  (private)
-#   branch devel, pin 2026-08-16 -> f82f7370c (map-agent: credentials read from
-#   whoever owns them - mapcontroller on a controller, mapagent ap sections on
-#   an agent; before this a fresh agent broadcast the 99-mapcntlr fallbacks)
+#   branch devel, pin 2026-08-17 -> f90c7d135 (map-agent: the genconfig hotplug
+#   must not rewrite wireless on a box with no mesh role - a factory-fresh
+#   router otherwise loses OpenWrt-2g/5g/6g and puts MAP--BH on the air)
+#   predchozi pin f82f7370c: credentials come from whoever owns them -
+#   mapcontroller on a controller, mapagent ap sections on an agent
 #
 # Pri obnove na cistem stroji klonovat odtud, ne z upstreamu - upstream nase
 # patche nema. Po zmene ve feedu: commit + `git push woziwrt devel` + posunout
 # pin nize, jinak `git reset --hard` v teto funkci tu zmenu pri buildu zahodi.
 easymesh_setup_iopsys_feed() {
 	# pin na týž commit jako original builder (L152), fallback HEAD
-	( cd "${EASYMESH_SHARED}/iopsys-feed" && git reset --hard f82f7370c && git clean -fd ) 2>/dev/null || \
+	( cd "${EASYMESH_SHARED}/iopsys-feed" && git reset --hard f90c7d135 && git clean -fd ) 2>/dev/null || \
 	( cd "${EASYMESH_SHARED}/iopsys-feed" && git reset --hard HEAD && git clean -fd ) 2>/dev/null || true
 	grep -q "src-link iopsys" feeds.conf.default || \
 		echo "src-link iopsys ${EASYMESH_SHARED}/iopsys-feed" >> feeds.conf.default
