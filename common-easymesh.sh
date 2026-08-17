@@ -242,7 +242,9 @@ easymesh_install_mld_scripts() {
 # na disku VM1. Od 25. 7. je zrcadleno:
 #
 #   remote woziwrt = https://github.com/woziwrt/iopsys-feed.git  (private)
-#   branch devel, pin 2026-08-17 -> f90c7d135 (map-agent: the genconfig hotplug
+#   branch devel, pin 2026-08-17 -> f23efffc4 (map-agent: a join in progress must
+#   pass the genconfig gate)
+#   predchozi pin f90c7d135: (map-agent: the genconfig hotplug
 #   must not rewrite wireless on a box with no mesh role - a factory-fresh
 #   router otherwise loses OpenWrt-2g/5g/6g and puts MAP--BH on the air)
 #   predchozi pin f82f7370c: credentials come from whoever owns them -
@@ -252,9 +254,29 @@ easymesh_install_mld_scripts() {
 # patche nema. Po zmene ve feedu: commit + `git push woziwrt devel` + posunout
 # pin nize, jinak `git reset --hard` v teto funkci tu zmenu pri buildu zahodi.
 easymesh_setup_iopsys_feed() {
-	# pin na týž commit jako original builder (L152), fallback HEAD
-	( cd "${EASYMESH_SHARED}/iopsys-feed" && git reset --hard f23efffc4 && git clean -fd ) 2>/dev/null || \
-	( cd "${EASYMESH_SHARED}/iopsys-feed" && git reset --hard f23efffc4HEAD && git clean -fd ) 2>/dev/null || true
+	# Feed musi stat PRESNE na pinu. Kdyz pin lokalne neni, dotahnout ho;
+	# kdyz ani to nejde, build ZASTAVIT.
+	#
+	# 2026-08-17: zachranna vetev tu byla rozbita nadvakrat. Znela
+	# `git reset --hard f23efffc4HEAD` (slepenina pinu a slova HEAD, vznikla
+	# pri posouvani pinu) a koncila na `|| true`. Kdyby se pin nenasel,
+	# postavilo by se to nad cimkoli, co je zrovna vytazene - tedy presne ten
+	# tichy drift, proti kteremu pin je. Vracet se k HEAD nema smysl: HEAD
+	# muze byt cokoli, kdezto pin je to jedine, co je overene na zeleze.
+	#
+	# Pin jde prebit zvenci, aby slo znovu postavit starsi PROKAZANY stav:
+	#   IOPSYS_PIN=f82f7370c ./builder-...   (+ v easymesh-r6-feed vytahnout
+	#   odpovidajici tag, ten se odsud nepretahuje)
+	# Bez toho by `git reset --hard` nize kazdy takovy pokus prepsal zpatky
+	# na aktualni pin a build by tise vyrobil dnesek misto vcerejska.
+	local pin=${IOPSYS_PIN:-f23efffc4}
+	( cd "${EASYMESH_SHARED}/iopsys-feed" \
+	  && { git rev-parse --verify -q "${pin}^{commit}" >/dev/null 2>&1 || git fetch --all --tags; } \
+	  && git reset --hard "${pin}" && git clean -fd ) || {
+		echo "FATAL: iopsys-feed nelze postavit na pin ${pin}" >&2
+		echo "       (strom: ${EASYMESH_SHARED}/iopsys-feed)" >&2
+		exit 1
+	}
 	grep -q "src-link iopsys" feeds.conf.default || \
 		echo "src-link iopsys ${EASYMESH_SHARED}/iopsys-feed" >> feeds.conf.default
 	./scripts/feeds update iopsys
