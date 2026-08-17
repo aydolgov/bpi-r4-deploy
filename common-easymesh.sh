@@ -230,6 +230,90 @@ easymesh_install_mld_scripts() {
 	\cp "$E/uci-defaults/99-drop-legacy-fronthaul" files/etc/uci-defaults/; chmod +x files/etc/uci-defaults/99-drop-legacy-fronthaul
 }
 
+# --- 5) branka pred buildem --------------------------------------------------
+# Sdilene stromy jsou spravne: jeden zdroj pravdy je to, co 9. 8. chybelo, kdyz
+# se dva buildery rozesly o devet dni a nikdo si toho nevsiml. Sdileni ale ma
+# dve ostri, a obe je videt az kdyz build bezi:
+#
+#   - `easymesh_setup_iopsys_feed` dela `git reset --hard` + `git clean -fd`.
+#     Rozdelana neulozena prace v iopsys-feed tim ZMIZI, bez varovani.
+#
+#   - z tehoz stromu se stavi ZAPECENA easymesh (produkce, =y) i APK easymesh
+#     (lab, =m). Uprava mysleina pro obraz tim meni i balicky, ktere pak nekdo
+#     nainstaluje na bezici uzel. Dokud je strom cisty a oznackovany, da se
+#     aspon rict, CO se v obou pripadech postavilo.
+#
+# Proto se pred kazdym buildem overi, ze je z ceho stavet znovu. Prebiti:
+# EASYMESH_ALLOW_DIRTY=1 (pro pokusy; takovy build je NEreprodukovatelny).
+easymesh_require_clean_trees() {
+	local dirty=0 t rev desc
+	for t in "${EASYMESH_SHARED}/easymesh-r6-feed" "${EASYMESH_SHARED}/iopsys-feed" "${EASYMESH_SHARED}"; do
+		[ -d "$t/.git" ] || continue
+		rev=$(git -C "$t" rev-parse --short HEAD 2>/dev/null)
+		desc=$(git -C "$t" describe --tags --exact-match HEAD 2>/dev/null || echo "bez znacky")
+		if [ -n "$(git -C "$t" status --porcelain 2>/dev/null)" ]; then
+			echo "!!! neulozene zmeny: $t  ($rev)" >&2
+			git -C "$t" status --porcelain | sed 's/^/        /' >&2
+			dirty=1
+		else
+			echo ">>> strom cisty: $(basename "$t")  $rev  [$desc]"
+		fi
+	done
+	if [ "$dirty" = 1 ] && [ "${EASYMESH_ALLOW_DIRTY:-0}" != "1" ]; then
+		echo "" >&2
+		echo "STOP: build by tyhle zmeny zahodil (git reset --hard ve feedu)" >&2
+		echo "      a vysledek by neslo znovu vyrobit." >&2
+		echo "      Bud je zacommituj, nebo spust s EASYMESH_ALLOW_DIRTY=1." >&2
+		exit 1
+	fi
+}
+
+# --- 6) archiv vystupu -------------------------------------------------------
+# Oba buildery zacinaji `rm -rf openwrt` a sdileji tyz adresar, takze kazdy
+# build smaze uplne vsechno po tom predchozim - vcetne obrazu druhe varianty.
+# Dva samostatne stromy by to vyresily, ale nevejdou se na disk (~53 GB kazdy).
+# Odlozit si vystup je levnejsi a resi to, na cem zalezi.
+#
+# Krome binarek se zapisuje i RECEPT. Bez nej jsou obrazy neopakovatelne:
+# feeds.conf.default pinuje upstream feedy jen VETVI (`;openwrt-25.12`), takze
+# `feeds update` za mesic stahne neco jineho. Hashe se daji zjistit jen behem
+# buildu - potom uz je strom smazany.
+easymesh_archive_build() {
+	local variant="${1:?variant}" root="${2:-$(pwd)}" stamp dst
+	[ -d "$root/bin/targets" ] || root="$root/openwrt"
+	[ -d "$root/bin/targets" ] || { echo "archiv: nenasel jsem bin/targets pod $root" >&2; return 0; }
+	stamp=$(date +%Y-%m-%d-%H%M)
+	dst="${HOME}/archiv/${stamp}-${variant}"
+	mkdir -p "$dst/images" "$dst/packages"
+
+	find "$root/bin/targets" \( -name '*.itb' -o -name '*.img.gz' \) -exec cp -n {} "$dst/images/" \; 2>/dev/null
+	find "$root/bin/packages" -name '*.apk' \( -path '*easymeshr6*' -o -path '*iopsys*' \) \
+		-exec cp -n {} "$dst/packages/" \; 2>/dev/null
+
+	{
+		echo "varianta : $variant"
+		echo "postaveno: $stamp"
+		echo ""
+		echo "RECEPT - bez techto revizi to nejde vyrobit znovu"
+		local t
+		for t in easymesh-r6-feed iopsys-feed; do
+			[ -d "${EASYMESH_SHARED}/$t/.git" ] && printf "  %-18s %s  [%s]\n" "$t" \
+				"$(git -C "${EASYMESH_SHARED}/$t" rev-parse HEAD)" \
+				"$(git -C "${EASYMESH_SHARED}/$t" describe --tags --exact-match HEAD 2>/dev/null || echo 'bez znacky')"
+		done
+		[ -d "$root/.git" ] && printf "  %-18s %s\n" "openwrt" "$(git -C "$root" rev-parse HEAD)"
+		for t in packages luci routing telephony video; do
+			[ -d "$root/feeds/$t/.git" ] && printf "  %-18s %s\n" "feeds/$t" "$(git -C "$root/feeds/$t" rev-parse HEAD)"
+		done
+		echo ""
+		echo "OBSAH"
+		ls -1 "$dst/images" 2>/dev/null | sed 's|^|  images/|'
+		ls -1 "$dst/packages" 2>/dev/null | sed 's|^|  packages/|'
+	} > "$dst/MANIFEST.txt"
+
+	echo ">>> archiv: $dst  ($(du -sh "$dst" 2>/dev/null | cut -f1))"
+}
+
 # --- 3) iopsys feed = JEDEN sdílený zdroj (proti 991-typu driftu) -----------
 # Voláno z openwrt/. Feed žije v EASYMESH_SHARED/iopsys-feed — jeden pro
 # universal i x8, takže se NEMŮŽOU rozejít (dnes ráno 991 chyběl v x8 kopii).
