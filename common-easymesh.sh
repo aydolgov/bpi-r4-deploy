@@ -326,7 +326,7 @@ easymesh_archive_build() {
 # na disku VM1. Od 25. 7. je zrcadleno:
 #
 #   remote woziwrt = https://github.com/woziwrt/iopsys-feed.git  (private)
-#   branch devel, pin 2026-08-17 -> f23efffc4 (map-agent: a join in progress must
+#   branch devel, pin 2026-08-17 -> ccad39556 (map-agent: a join in progress must
 #   pass the genconfig gate)
 #   predchozi pin f90c7d135: (map-agent: the genconfig hotplug
 #   must not rewrite wireless on a box with no mesh role - a factory-fresh
@@ -353,7 +353,7 @@ easymesh_setup_iopsys_feed() {
 	#   odpovidajici tag, ten se odsud nepretahuje)
 	# Bez toho by `git reset --hard` nize kazdy takovy pokus prepsal zpatky
 	# na aktualni pin a build by tise vyrobil dnesek misto vcerejska.
-	local pin=${IOPSYS_PIN:-f23efffc4}
+	local pin=${IOPSYS_PIN:-ccad39556}
 	( cd "${EASYMESH_SHARED}/iopsys-feed" \
 	  && { git rev-parse --verify -q "${pin}^{commit}" >/dev/null 2>&1 || git fetch --all --tags; } \
 	  && git reset --hard "${pin}" && git clean -fd ) || {
