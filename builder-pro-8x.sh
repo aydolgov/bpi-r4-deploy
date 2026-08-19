@@ -9,10 +9,10 @@ rm -rf openwrt
 rm -rf mtk-openwrt-feeds
 
 git clone --branch openwrt-25.12 https://github.com/openwrt/openwrt.git openwrt
-cd openwrt; git checkout ${OPENWRT_COMMIT:-6dead2869209f4ff9825f3169c129c5ef04f6273}; cd -;
+cd openwrt; git checkout ${OPENWRT_COMMIT:-4a5c6b90d21522d2663ce2718c973f9e845f2119}; cd -;
 
 git clone --branch main https://github.com/mediatek/mtk-openwrt-feeds mtk-openwrt-feeds
-( cd mtk-openwrt-feeds && git checkout ${MTK_COMMIT:-822c2f0603614e47ec8496571043431494fd2841} )
+( cd mtk-openwrt-feeds && git checkout ${MTK_COMMIT:-4e825214deaafc5cdc5457d66a1a828449f07e69} )
 
 \cp -r my_files/999-sfp-10-additional-quirks.patch mtk-openwrt-feeds/25.12/files/target/linux/mediatek/patches-6.12
 \cp -r my_files/999-sfp-11-rtl8261be-mdio-none.patch mtk-openwrt-feeds/25.12/files/target/linux/mediatek/patches-6.12
