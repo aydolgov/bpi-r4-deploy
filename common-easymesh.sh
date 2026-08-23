@@ -287,6 +287,17 @@ easymesh_archive_build() {
 	mkdir -p "$dst/images" "$dst/packages"
 
 	find "$root/bin/targets" \( -name '*.itb' -o -name '*.img.gz' \) -exec cp -n {} "$dst/images/" \; 2>/dev/null
+
+	# PRIDANO 23. 8.: eMMC a NAND obrazy jsou `.bin`, takze je find vyse minul
+	# a v archivu nikdy nebyly - 23. 8. se musely dolovat ze stromu rucne, a to
+	# jde jen do dalsiho buildu, ktery bin/targets prepise.
+	# Zabalene, protoze nezabalene maji ~188 MB. `nvme-img.bin` se VYNECHAVA
+	# schvalne - ma 592 MB a instaluje se jinou cestou.
+	for _b in "$root"/bin/targets/*/*/*emmc-img.bin "$root"/bin/targets/*/*/*snand-img.bin; do
+		[ -f "$_b" ] || continue
+		_g="$dst/images/$(basename "$_b").gz"
+		[ -f "$_g" ] || gzip -c "$_b" > "$_g"
+	done
 	find "$root/bin/packages" -name '*.apk' \( -path '*easymeshr6*' -o -path '*iopsys*' \) \
 		-exec cp -n {} "$dst/packages/" \; 2>/dev/null
 
